@@ -11,11 +11,7 @@ corrcal_parser.add_argument(
     help="Path to input data file(s). See documentation for details.",
 )
 corrcal_parser.add_argument(
-    "-N",
-    "--noise",
-    default=None,
-    type=str,
-    help="Path to noise model.",
+    "-N", "--noise", default=None, type=str, help="Path to noise model.",
 )
 corrcal_parser.add_argument(
     "-S",
@@ -29,7 +25,7 @@ corrcal_parser.add_argument(
     "--cov",
     default=None,
     type=str,
-    help="Path to a sparse covariance model."
+    help="Path to a sparse covariance model.",
 )
 corrcal_parser.add_argument(
     "-a",
@@ -46,10 +42,7 @@ corrcal_parser.add_argument(
     help="Where to write calibration products.",
 )
 corrcal_parser.add_argument(
-    "-v",
-    "--verbose",
-    default=False,
-    action="store_true",
+    "-v", "--verbose", default=False, action="store_true",
 )
 corrcal_parser.add_argument(
     "--clobber",
@@ -67,5 +60,5 @@ corrcal_parser.add_argument(
     "--gpu",
     default=False,
     action="store_true",
-    help="Whether to use GPU acceleration where possible."
+    help="Whether to use GPU acceleration where possible.",
 )

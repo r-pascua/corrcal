@@ -11,6 +11,3 @@ struct sparse_2level {
 };
 
 struct sparse_2level *fill_struct_sparse(double *diag, double *vecs, double *src, int n, int nvec, int nsrc, int nblock, long *lims, int isinv);
-
-
-

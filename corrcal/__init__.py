@@ -1,6 +1,20 @@
 from pathlib import Path
 import logging
+
+from . import cfuncs
+from . import corrcal
+from . import gridding
+from . import io
+from . import linalg
+from . import noise
+from . import optimize
+from . import parsers
+from . import sparse
+from . import utils
+from .sparse import Sparse2Level
+
 LOGGER = logging.Logger(name="corrcal_logger", level=logging.WARN)
+NOISE_MODELS = {}
 
 # Ripped from hera_sim
 try:
@@ -13,14 +27,5 @@ try:
     SRC_PATH = Path(__file__).parent / "src"
     __version__ = version(__name__)
 except PackageNotFoundError:
-    print("Package not found.")
+    print("corrcal is not installed.")
     pass
-
-
-from . import cfuncs
-from . import corrcal
-from . import io
-from . import optimize
-from . import sparse
-from . import utils
-from .sparse import Sparse2Level

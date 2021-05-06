@@ -1,0 +1,18 @@
+[flake8]
+max-line-length = 79
+max-complexity = 35
+# What does the complexity refer to?
+rst-roles =
+    class
+    func
+    mod
+    meth
+    attr
+    obj
+rst-directives =
+    note
+    warning
+    versionadded
+    versionchanged
+    deprecated
+    seealso
