@@ -1,4 +1,6 @@
 from pathlib import Path
+import logging
+LOGGER = logging.Logger(name="corrcal_logger", level=logging.WARN)
 
 # Ripped from hera_sim
 try:
