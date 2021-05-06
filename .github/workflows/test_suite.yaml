@@ -6,7 +6,7 @@ name: Tests
 on:
   pull_request:
   push:
-    branches: [main]
+#    branches: [main]  don't run these until tests are built
 
 jobs:
   tests:
