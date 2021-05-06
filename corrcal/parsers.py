@@ -25,6 +25,20 @@ corrcal_parser.add_argument(
     help="Path to sky covariance model.",
 )
 corrcal_parser.add_argument(
+    "-C",
+    "--cov",
+    default=None,
+    type=str,
+    help="Path to a sparse covariance model."
+)
+corrcal_parser.add_argument(
+    "-a",
+    "--algorithm",
+    default="conjugate gradient",
+    type=str,
+    help="Name of optimization routine to use.",
+)
+corrcal_parser.add_argument(
     "-o",
     "--outdir",
     default=None,
