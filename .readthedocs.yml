@@ -1,0 +1,21 @@
+# Read the Docs config (copied from hera_sim)
+# See https://docs.readthedocs.io/en/stable/config-file/v2.html for details
+
+# Required
+version: 2
+
+# Use Sphinx to build documentation from docs/ directory
+sphinx:
+  configuration: docs/conf.py
+
+formats: all
+
+conda:
+  environment: docs/environment.yaml
+
+python:
+  version: 3.7
+  system_packages: true
+  install:
+    - method: pip
+      path: .
