@@ -1,0 +1,53 @@
+# File ripped from hera_sim and adjusted for this repo.
+name: Tests
+
+# Test on all pushes, except for tag-only pushes (copying framework
+# used in hera_sim), and PRs into main.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  tests:
+    env:
+      ENV_NAME: tests
+      PYTHON: ${{ matrix.python-version }}
+      OS: ${{ matrix.os }}
+    name: Testing
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: [3.7, 3.8, 3.9]
+      steps:
+        - uses: actions/checkout@main
+          with:
+            fetch-depth: 0
+
+        - uses: actions/setup-python@v2
+          with:
+            python-version: ${{ matrix.python-version }}
+
+        - name: set PY
+          run: echo "PY=$(python -c 'import hashlib, sys;"
+                    "print(hashlib.sha256(sys.version.encode()"
+                    "+sys.executable.encode()).hexdigest())')"
+               >> $GITHUB_ENV
+
+        - name: Setup Environment
+          run: |
+            which pip
+            pip install .[tests]
+
+        - name: Run Tests
+          run: |
+            python -m pytest
+
+        - name: Upload Coverage
+          uses: codecov/codecov-action@main
+          if: matrix.os == "ubuntu-latest" && success()
+          with:
+            token: ${{ secrets.CODECOV_TOKEN }}  # Required.
+            file: ./coverage.xml  # Optional.

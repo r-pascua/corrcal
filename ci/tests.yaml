@@ -1,0 +1,14 @@
+name: tests
+channels:
+    - conda-forge
+    - defaults
+dependencies:
+    - numpy>=1.18
+    - h5py>=2.10
+    - hdf5>=1.10.4
+    - pip>=20.0
+    - pytest-cov>=2.7.1
+    - scipy>=1.4.1
+    - pip:
+        - git+https://github.com/RadioAstronomySoftwareGroup/pyuvdata.git
+        - git+https://github.com/HERA-Team/hera_cal.git
