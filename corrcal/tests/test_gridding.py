@@ -2,4 +2,9 @@ import pytest
 
 
 def test_placeholder():
-    pass
+    try:
+        import pyfof
+        PYFOF = True
+    except ImportError:
+        PYFOF = False
+    assert PYFOF

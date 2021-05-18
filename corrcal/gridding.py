@@ -22,3 +22,10 @@ try:
 except ImportError:
     print("pyfof is not installed. Some gridding features unavailable.")
     PYFOF = False
+
+
+def make_uv_grid(u, v, tol=0.01, do_fof=True):
+    """
+    Grid the provided uv-coordinates given a desired resolution.
+    """
+    pass

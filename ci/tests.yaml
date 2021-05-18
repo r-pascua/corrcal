@@ -3,6 +3,7 @@ channels:
     - conda-forge
     - defaults
 dependencies:
+    - boost
     - numpy>=1.18
     - h5py>=2.10
     - hdf5>=1.10.4
@@ -12,3 +13,4 @@ dependencies:
     - pip:
         - git+https://github.com/RadioAstronomySoftwareGroup/pyuvdata.git
         - git+https://github.com/HERA-Team/hera_cal.git
+        - pyfof
