@@ -4,13 +4,16 @@ channels:
     - defaults
 dependencies:
     - boost
-    - numpy>=1.18
+    - git
     - h5py>=2.10
     - hdf5>=1.10.4
+    - numpy>=1.18
     - pip>=20.0
     - pytest-cov>=2.7.1
+    - python<3.9
     - scipy>=1.4.1
     - pip:
         - git+https://github.com/RadioAstronomySoftwareGroup/pyuvdata.git
+        - git+https://github.com/HERA-Team/uvtools.git
         - git+https://github.com/HERA-Team/hera_cal.git
         - pyfof

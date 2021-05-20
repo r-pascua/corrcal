@@ -1,1 +1,6 @@
 *__pycache__
+\.coverage
+*\.egg-info
+coverage\.xml
+*\.so
+build*
