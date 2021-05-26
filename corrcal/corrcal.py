@@ -10,7 +10,7 @@ from . import noise
 from . import optimize
 from . import sparse
 from . import utils
-from . import NOISE_MODELS
+from .noise import NOISE_MODELS
 
 
 def corrcal_pipe(
