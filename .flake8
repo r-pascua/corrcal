@@ -1,6 +1,7 @@
 [flake8]
 ignore =
     F401
+    RST301  # Indented blocks in docstrings; figure this out later
 max-line-length = 79
 max-complexity = 35
 # What does the complexity refer to?
