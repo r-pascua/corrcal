@@ -95,7 +95,7 @@ class Sparse2Level:
 
     def expand(self):
         """Generate the full covariance matrix.
-        
+
         Returns
         -------
         cov: np.ndarray of float
@@ -109,14 +109,14 @@ class Sparse2Level:
         for start, stop in edges:
             this_slice = slice(start, stop)
             this_block = (this_slice, this_slice)
-            diffuse_signal = self.diffuse_vectors[:,this_slice]
+            diffuse_signal = self.diffuse_vectors[:, this_slice]
             sky_cov[this_block] = diffuse_signal.T @ diffuse_signal
         if self.isinv:
             return np.diag(self.noise_variance) - sky_cov
         else:
             return np.diag(self.noise_variance) + sky_cov
 
-    def invert(self):
+    def inverse(self):
         """Invert the sparse covariance and return the result."""
         inverse = self.copy()
         inverse.isinv = not self.isinv
@@ -124,7 +124,7 @@ class Sparse2Level:
         Neig = self.diffuse_vectors.shape[0]
         Nsrc = self.source_vectors.shape[0]
         Nbls = self.noise_variance.size
-        
+
         # The following is basically just copied straight from Jon's
         # implementation.
         # TODO: unpack this, make it make sense.
@@ -139,9 +139,7 @@ class Sparse2Level:
             tmp.ctypes.data,
         )
 
-        block_identity = np.repeat(
-            [np.eye(Neig)], self.Ngroups, axis=0
-        )
+        block_identity = np.repeat([np.eye(Neig)], self.Ngroups, axis=0)
         if self.isinv:
             tmp2 = block_identity - tmp
         else:
@@ -181,7 +179,6 @@ class Sparse2Level:
         inverse.source_vectors = small_mat * tmp  # This as well
 
         return inverse
-
 
     def apply_gains(self, gains, ant1, ant2):
         """
