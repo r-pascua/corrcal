@@ -121,3 +121,17 @@ def make_redundant_groups(u, v, tol=0.01, do_fof=True):
     edges = np.where(np.diff(grouping_key[sorting_key]))[0].astype(int) + 1
     is_conj = is_conj[sorting_key]
     return sorting_key, edges, is_conj
+
+
+def grid_data(data, u, v, noise, ant1, ant2, tol=0.1, do_fof=True):
+    """Re-order the data, noise, and antenna arrays by redundancy.
+
+    Parameters
+    ----------
+        < todo >
+
+    Returns
+    -------
+        < todo >
+    """
+    pass
