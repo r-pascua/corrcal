@@ -2,13 +2,13 @@ from pathlib import Path
 import logging
 
 from . import cfuncs
-from . import corrcal
 from . import gridding
 from . import io
 from . import linalg
 from . import noise
 from . import optimize
 from . import parsers
+from . import pipeline
 from . import sparse
 from . import utils
 from .sparse import Sparse2Level
