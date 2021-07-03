@@ -71,7 +71,6 @@ class Sparse2Level:
         I believe this is used in calculating chi-squared, though this
         needs to be investigated a bit further.
         """
-        pass
         # Setup to use the C implementation.
         product = np.zeros_like(vec)
         # TODO: Update this when extending to >1 freq channel and time
