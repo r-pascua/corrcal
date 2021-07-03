@@ -82,15 +82,20 @@ def multiply(left, right):
 
     Parameters
     ----------
-    left: TBD
+    left: np.ndarray
         Left-hand matrix in the product.
-    right: TBD
+    right: np.ndarray
         Right-hand matrix in the product.
 
     Returns
     -------
     product: TBD
         Product of ``left`` and ``right`` matrices.
+
+    Notes
+    -----
+    This function is nearly 10 times slower than the numpy implementation.
+    It is recommended to just use left @ right instead of this function.
     """
     if left.shape[1] != right.shape[0]:
         raise ValueError("Matrices cannot be multiplied.")
