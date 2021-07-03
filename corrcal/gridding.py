@@ -60,60 +60,14 @@ def make_redundant_groups(u, v, tol=0.01, do_fof=True):
         e.g. the (unsorted) u-modes, you would do::
             ``u[sorting_key][is_conj] *= -1``
     """
+    # TODO: this will need to be expanded if we allow w =/= 0.
     is_conj = v < 0
     uv = np.vstack([u, v]).T
     uv[is_conj] *= -1
     if PYFOF and do_fof:
         reds = pyfof.friends_of_friends(uv, tol)
     else:
-        reds, centers = [], []
-        for i, uv_ in enumerate(uv):
-            new_group = True
-            for j, (red, center) in enumerate(zip(reds, centers)):
-                if np.linalg.norm(uv_ - center) <= tol:
-                    # Update the center of the redundant group.
-                    N = len(red)
-                    centers[j] = (N * center + uv_) / (N + 1)
-                    # Add the baseline's index to the list of reds.
-                    red.append(i)
-                    new_group = False
-                    break
-            if new_group:
-                reds.append([i])
-                centers.append(uv_)
-
-        # Recursively trim the set to ensure convergence.
-        converged = False
-        while not converged:
-            new_reds, new_centers = [], []
-            skip = []
-            for i, (red, center) in enumerate(zip(reds, centers)):
-                # Skip groups that have already been merged.
-                if i in skip:
-                    continue
-                merge_groups = False
-                for j, (other_red, other_center) in enumerate(
-                    zip(reds, centers)
-                ):
-                    if i == j:
-                        continue
-                    if np.linalg.norm(center - other_center) <= tol:
-                        merge_groups = True
-                        skip.append(j)
-                        break
-                # Update the redundant group and its center.
-                if merge_groups:
-                    N1, N2 = len(red), len(other_red)
-                    red += other_red
-                    center = np.average(
-                        [center, other_center], axis=0, weights=[N1, N2]
-                    )
-                new_reds.append(red)
-                new_centers.append(center)
-            if len(reds) == len(new_reds):
-                converged = True
-            reds = new_reds
-            centers = new_centers
+        reds = calc_reds_from_uvs(uv, tol)
     grouping_key = np.zeros_like(u).astype(int)
     for i, group in enumerate(reds):
         grouping_key[group] = i
@@ -123,6 +77,77 @@ def make_redundant_groups(u, v, tol=0.01, do_fof=True):
     return sorting_key, edges, is_conj
 
 
+def calc_reds_from_uvs(uv, tol=0.01):
+    """Calculate redundant groups from an array of uv-coordinates.
+
+    Parameters
+    ----------
+    uv
+        Array containing the uv-coordinates for each baseline. Different
+        baselines should be accessed along the zero-th axis, so that the
+        array has shape (Nbls, 2).
+    tol
+        Radius of each quasi-redundant group (measured relative to the
+        mean of all baselines within the group), in units of wavelengths.
+        Default is 1/100 of a wavelength.
+
+    Returns
+    -------
+    reds
+        List of the quasi-redundant groups, with each entry being a list
+        of the baselines within the redundant group.
+    """
+    reds, centers = [], []
+    for i, uv_ in enumerate(uv):
+        new_group = True
+        for j, (red, center) in enumerate(zip(reds, centers)):
+            if np.linalg.norm(uv_ - center) <= tol:
+                # Update the center of the redundant group.
+                N = len(red)
+                centers[j] = (N * center + uv_) / (N + 1)
+                # Add the baseline's index to the list of reds.
+                red.append(i)
+                new_group = False
+                break
+        if new_group:
+            reds.append([i])
+            centers.append(uv_)
+
+    # Recursively trim the set to ensure convergence.
+    converged = False
+    while not converged:
+        new_reds, new_centers = [], []
+        skip = []
+        for i, (red, center) in enumerate(zip(reds, centers)):
+            # Skip groups that have already been merged.
+            if i in skip:
+                continue
+            merge_groups = False
+            for j, (other_red, other_center) in enumerate(zip(reds, centers)):
+                if i == j:
+                    continue
+                if np.linalg.norm(center - other_center) <= tol:
+                    merge_groups = True
+                    skip.append(j)
+                    break
+            # Update the redundant group and its center.
+            if merge_groups:
+                N1, N2 = len(red), len(other_red)
+                red += other_red
+                center = np.average(
+                    [center, other_center], axis=0, weights=[N1, N2]
+                )
+            new_reds.append(red)
+            new_centers.append(center)
+        if len(reds) == len(new_reds):
+            converged = True
+        reds = new_reds
+        centers = new_centers
+    return reds
+
+
+# TODO: refactor this... it isn't used directly in Jon's implementation
+# so it'll probably be better to make more general-use functions.
 def grid_data(data, u, v, noise, ant1, ant2, tol=0.1, do_fof=True):
     """Re-order the data, noise, and antenna arrays by redundancy.
 
@@ -134,4 +159,18 @@ def grid_data(data, u, v, noise, ant1, ant2, tol=0.1, do_fof=True):
     -------
         < todo >
     """
-    pass
+    # Figure out how to sort the data.
+    sorting_key, edges, is_conj = make_redundant_groups(u, v, tol, do_fof)
+
+    # First, handle the antennas.
+    ant1 = ant1[sorting_key]
+    ant2 = ant2[sorting_key]
+    swapped_ants = ant1[is_conj]
+    ant1[is_conj] = ant2[is_conj]
+    ant2[is_conj] = swapped_ants
+
+    # Next, handle the data and noise.
+    if np.iscomplex(data):
+        noise = noise[sorting_key]
+
+    # Next, conjugate antennas and data where appropriate.
