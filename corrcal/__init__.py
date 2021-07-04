@@ -1,6 +1,7 @@
 from pathlib import Path
 import logging
 
+from . import calibrate
 from . import cfuncs
 from . import gridding
 from . import io
@@ -11,6 +12,8 @@ from . import parsers
 from . import pipeline
 from . import sparse
 from . import utils
+
+from .calibrate import CorrCal
 from .sparse import Sparse2Level
 
 LOGGER = logging.Logger(name="corrcal_logger", level=logging.WARN)
