@@ -1,9 +1,23 @@
 import numpy as np
 
-from . import Sparse2Level
+from .sparse import Sparse2Level
+
+
+def read_binary(fname, dtype):
+    """Thin wrapper around np.fromfile for readability."""
+    with open(fname, "r") as f:
+        out = np.fromfile(f, dtype)
+    return out
 
 
 def read_sparse(fname):
+    try:
+        return _read_sparse_binary(fname)
+    except IOError:
+        return _read_sparse_h5(fname)
+
+
+def _read_sparse_binary(fname):
     """Load the contents of a binary file into a Sparse2Level object.
 
     Parameters
@@ -93,3 +107,7 @@ def read_sparse(fname):
         group_edges=group_edges,
         isinv=isinv,
     )
+
+
+def _read_sparse_h5(fname):
+    raise NotImplementedError
