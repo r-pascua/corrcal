@@ -30,9 +30,12 @@ class Sparse2Level:
 
     def __init__(
         self,
+        *,
         noise_variance=None,
         diffuse_vectors=None,
         source_vectors=None,
+        ant_1_array=None,
+        ant_2_array=None,
         group_edges=None,
         isinv=False,
     ):
