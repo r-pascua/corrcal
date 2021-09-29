@@ -73,6 +73,7 @@ def make_redundant_groups(u, v, tol=0.01, do_fof=True):
         grouping_key[group] = i
     sorting_key = np.argsort(grouping_key)
     edges = np.where(np.diff(grouping_key[sorting_key]))[0].astype(int) + 1
+    edges = np.concatenate([[0], edges, [len(u) + 1]])
     is_conj = is_conj[sorting_key]
     return sorting_key, edges, is_conj
 
@@ -146,14 +147,29 @@ def calc_reds_from_uvs(uv, tol=0.01):
     return reds
 
 
-# TODO: refactor this... it isn't used directly in Jon's implementation
-# so it'll probably be better to make more general-use functions.
-def grid_data(data, u, v, noise, ant1, ant2, tol=0.1, do_fof=True):
+def group_by_redundancy(
+    data,
+    noise,
+    uvws,
+    ant1,
+    ant2,
+    tol=0.1,
+    do_fof=True,
+    bl_axis=0,
+):
     """Re-order the data, noise, and antenna arrays by redundancy.
 
     Parameters
     ----------
-        < todo >
+        array
+            ``ndarray`` containing the data to be grouped by redundancy. Can be
+            any shape, but must have an axis over baselines.
+        uvws
+            ``ndarray`` containing the baseline vectors in units of wavelengths.
+            Must have shape (Nbls, Ndim), with Ndim either 2 or 3.
+        ant1
+            ``ndarray`` enumerating the 
+
 
     Returns
     -------
@@ -172,5 +188,23 @@ def grid_data(data, u, v, noise, ant1, ant2, tol=0.1, do_fof=True):
     # Next, handle the data and noise.
     if np.iscomplex(data):
         noise = noise[sorting_key]
+    else:
+        temp_noise = noise.copy()
+
 
     # Next, conjugate antennas and data where appropriate.
+
+
+def apply_sort(array, sort_key, is_conj):
+    """Sort the input array according to the sorting key. Conjugate as needed.
+
+    Parameters
+    ----------
+    array
+        ``ndarray`` to be sorted.
+    sort_key
+        ``ndarray`` providing the reordering to be applied to the input array.
+    is_conj
+        Boolean ``ndarray`` stating which entries need to be conjugated.
+    """
+    pass
