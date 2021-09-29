@@ -52,11 +52,11 @@ class Sparse2Level:
     def copy(self):
         """Convenience method for creating a copy."""
         return Sparse2Level(
-            self.noise_variance,
-            self.diffuse_vectors,
-            self.source_vectors,
-            self.group_edges,
-            self.isinv,
+            noise_variance=self.noise_variance,
+            diffuse_vectors=self.diffuse_vectors,
+            source_vectors=self.source_vectors,
+            group_edges=self.group_edges,
+            isinv=self.isinv,
         )
 
     def __mul__(self, vec):
