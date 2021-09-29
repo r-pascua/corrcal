@@ -4,6 +4,7 @@ from copy import deepcopy
 import numpy as np
 
 from . import cfuncs
+from . import linalg
 
 
 class Sparse2Level:
@@ -147,9 +148,11 @@ class Sparse2Level:
         else:
             tmp2 = block_identity + tmp
 
-        cfuncs.many_chol_c(tmp2.ctypes.data, Neig, self.Ngroups)
-        tmp3 = cfuncs.many_tri_inv(tmp2)
-        tmp4 = cfuncs.mult_vecs_by_blocks(
+        cfuncs.cholesky_factorization_parallel(
+            tmp2.ctypes.data, Neig, self.Ngroups
+        )
+        tmp3 = linalg.many_tri_inv(tmp2)
+        tmp4 = linalg.block_multiply(
             self.diffuse_vectors, tmp3, self.group_edges
         )
 
