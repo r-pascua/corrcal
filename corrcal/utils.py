@@ -1,3 +1,8 @@
+import numpy as np
+from typing import Sequence
+from . import linalg
+
+
 def check_parallel(parallel, gpu):
     """
     Ensure that only parallelization or GPU acceleration is requested.
@@ -14,3 +19,69 @@ def check_parallel(parallel, gpu):
             "CPU parallelization and GPU acceleration cannot be "
             "performed simultaneously."
         )
+
+
+def build_baseline_array(
+    ant_1_array: np.ndarray,
+    ant_2_array: np.ndarray,
+    antpos: np.ndarray,
+    antnums: Sequence,
+):
+    """Calculate all the baseline vectors for the provided parameters.
+
+    Parameters
+    ----------
+    ant_1_array
+        Array specifying the first antenna in each baseline.
+    ant_2_array
+        Array specifying the second antenna in each baseline.
+    antpos
+        Array with shape (Nants, 3) giving the ENU position, in meters, of
+        each antenna in the array.
+    antnums
+        Iterable giving the number of each antenna in the order that the terms
+        of ``antpos`` appear.
+
+    Returns
+    -------
+    baselines
+        Array with shape (Nbls, 3) giving all of the baselines for the provided
+        parameters. This is calculated using the convention that the baseline
+        is formed by subtracting the position of antenna 1 from the position of
+        antenna 2, i.e. :math:`b_{ij} = x_j - x_i`.
+    """
+    ant_1_inds = np.zeros_like(ant_1_array)
+    ant_2_inds = np.zeros_like(ant_2_array)
+    for i, ant in enumerate(antnums):
+        ant_1_inds[ant_1_array == ant] = i
+        ant_2_inds[ant_2_array == ant] = i
+    return antpos[ant_2_inds] - antpos[ant_1_inds]
+
+
+def build_gain_mat(gains, ant_1_inds, ant_2_inds):
+    """Build the matrix of products of per-antenna gains."""
+    complex_gains = build_complex_gains(gains)
+    return complex_gains[ant_1_inds] * complex_gains[ant_2_inds].conj()
+
+
+def scale_cov_by_gains(cov, gain_mat):
+    return linalg.diagmul(gain_mat, linalg.diagmul(cov, gain_mat.conj()))
+
+
+def build_complex_gains(gains):
+    """Turn split real/imag gain array into complex gains."""
+    n_ants = gains.size // 2
+    return gains[:n_ants] + 1j * gains[n_ants:]
+
+
+def rephase_to_ant(gains, ant=0):
+    """Rephase gains to a reference antenna."""
+    n_ants = gains.size // 2
+    complex_gains = build_complex_gains(gains)
+    ref_gain = complex_gains[ant]
+    conj_phase = ref_gain.conj() / np.abs(ref_gain)
+    rephased_complex_gains = complex_gains * conj_phase
+    rephased_gains = np.zeros_like(gains)
+    rephased_gains[:n_ants] = rephased_complex_gains.real
+    rephased_gains[n_ants:] = rephased_complex_gains.imag
+    return rephased_gains

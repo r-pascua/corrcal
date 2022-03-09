@@ -1,6 +1,191 @@
 import numpy as np
+import warnings
 
 from . import cfuncs
+from . import linalg
+from . import utils
+
+
+def simple_chisq(gain_mat, data, noise, cov):
+    """Simple chi-squared routine using a dense covariance representation.
+
+    Parameters
+    ----------
+    gain_mat
+        One-dimensional array containing the products of the complex gains.
+    data
+        The complex-valued visibility data.
+    noise
+        One-dimensional array containing the per-baseline thermal noise
+        variance.
+    cov
+        Dense representation of the complex-valued covariance matrix.
+
+    Returns
+    -------
+    chisq
+        Calculated value of chi-squared.
+    """
+    scaled_cov = utils.scale_cov_by_gains(cov, gain_mat)
+    diag_inds = np.arange(scaled_cov.shape[0])
+    scaled_cov[diag_inds, diag_inds] += noise
+    chisq = data.conj() @ np.linalg.inv(scaled_cov) @ data
+    if np.abs(chisq.imag / chisq.real) > 1e-8:
+        warnings.warn(
+            "Imaginary part of chi-squared is not consistent with zero."
+        )
+    return chisq.real
+
+
+def simple_nll(
+    gains, data, noise, cov, ant_1_inds, ant_2_inds, norm="simple", scale=None,
+):
+    """Simple negative log-likelihood function.
+
+    Parameters
+    ----------
+    gains
+        Array of per-antenna gains. The first half of the array should contain
+        the real part of the gains, while the second half of the array should
+        contain the imaginary part of the gains.
+    data
+        Complex-valued visibility data.
+    noise
+        One-dimensional array containing the per-baseline noise variance.
+    cov
+        Dense representation of the covariance matrix.
+    ant_1_inds
+        Indices specifying which gain to use for the first antenna in each
+        visibility.
+    ant_2_inds
+        Indices specifying which gain to use for the second antenna in each
+        visibility.
+    norm
+        How to normalize the likelihood. "simple" sets the unweighted average
+        gain to unity. "det" uses the usual Gaussian likelihood normalization.
+    scale
+        Not used in this function, but needed for the scipy minimizer.
+
+    Returns
+    -------
+    nll
+        Negative log-likelihood for the model parameters given the data.
+    """
+    gain_mat = utils.build_gain_mat(gains, ant_1_inds, ant_2_inds)
+    chisq = simple_chisq(gain_mat, data, noise, cov)
+    if norm == "simple":
+        n_ants = gains.size // 2
+        _norm = (
+            gains[n_ants:].sum() ** 2 + (gains[:n_ants].sum() - n_ants) ** 2
+        )
+    elif norm == "det":
+        scaled_cov = utils.scale_cov_by_gains(cov, gain_mat)
+        try:
+            _norm = (
+                2 * np.log(np.diag(np.linalg.cholesky(scaled_cov)).real).sum()
+            )
+        except np.linalg.LinAlgError:
+            warnings.warn("Covariance is not positive-definite.")
+            _norm = 1e10
+    else:
+        raise NotImplementedError
+    return chisq + _norm
+
+
+def simple_grad_nll(
+    gains, data, noise, cov, ant_1_inds, ant_2_inds, norm="simple", scale=1,
+):
+    """
+    Simple function calculating the gradient of the negative log-likelihood.
+
+    Parameters
+    ----------
+    gains
+        Per-antenna gains. First half contains the real part, second half
+        contains the imaginary part.
+    data
+        Complex-valued visibilities.
+    noise
+        Per-baseline noise variance.
+    cov
+        Dense representation of the covariance.
+    ant_1_inds
+        Index of the first antenna for each baseline.
+    ant_2_inds
+        Index of the second antenna for each baseline.
+    norm
+        Normalization scheme to use. See :func:~`simple_nll` for details.
+    scale
+        Scaling to apply to the calculated gradient. Intended to be used to
+        prevent the minimizer from searching too broad of a space in the
+        chi-squared surface.
+
+    Returns
+    -------
+    grad_nll
+        Gradient of the negative log-likelihood with respect to the per-antenna
+        gains. The first half contains the derivatives with respect to the real
+        part of the gains, while the second half contains the derivatives with
+        respect to the imaginary part of the gains.
+
+    See Also
+    --------
+    :func:~`simple_nll`
+    """
+    # Setup with the gain parameters.
+    gain_mat = utils.build_gain_mat(gains, ant_1_inds, ant_2_inds)
+    complex_gains = utils.build_complex_gains(gains)
+    n_ants = complex_gains.size
+
+    # Apply gains/noise.
+    scaled_cov = utils.scale_cov_by_gains(cov, gain_mat)
+    diag_inds = np.arange(scaled_cov.shape[0])
+    scaled_cov[diag_inds, diag_inds] += noise
+    cinv = np.linalg.inv(scaled_cov)
+    weighted_data = cinv @ data
+
+    # Calculate the gradient on a per-antenna basis.
+    grad_nll = np.zeros_like(gains)
+    for m in range(n_ants):
+        for n in range(2):  # Iterate over real/imag
+            # Figure out which half of the gradient to fill in.
+            here = (slice(None, n_ants), slice(n_ants, None))[n]
+
+            # Calculate the derivatives of the gain matrix and its conjugate.
+            gain_mat_deriv = np.zeros_like(gain_mat)
+            conj_gain_mat_deriv = np.zeros_like(gain_mat_deriv)
+            delta_a1_m = ant_1_inds == m
+            delta_a2_m = ant_2_inds == m
+            ant_1_gains = complex_gains[ant_1_inds[delta_a2_m]]
+            ant_2_gains = complex_gains[ant_2_inds[delta_a1_m]]
+            if n == 0:  # Derivative w.r.t. real part of the gain for antenna m
+                gain_mat_deriv[delta_a1_m] += np.conj(ant_2_gains)
+                gain_mat_deriv[delta_a2_m] += ant_1_gains
+                conj_gain_mat_deriv[delta_a1_m] += ant_2_gains
+                conj_gain_mat_deriv[delta_a2_m] += np.conj(ant_1_gains)
+            else:  # Derivative w.r.t. imag part of the gain for antenna m
+                gain_mat_deriv[delta_a1_m] += 1j * np.conj(ant_2_gains)
+                gain_mat_deriv[delta_a2_m] -= 1j * ant_1_gains
+                conj_gain_mat_deriv[delta_a1_m] -= 1j * ant_2_gains
+                conj_gain_mat_deriv[delta_a2_m] += 1j * np.conj(ant_1_gains)
+            cov_deriv = linalg.diagmul(
+                gain_mat_deriv, linalg.diagmul(cov, gain_mat.conj())
+            )
+            chisq_deriv = weighted_data.conj() @ cov_deriv @ weighted_data
+            if norm == "simple":
+                if n == 0:
+                    _norm = 2 * (complex_gains.real.sum() - n_ants)
+                else:
+                    _norm = 2 * complex_gains.imag.sum()
+            elif norm == "det":
+                _norm = np.diag(cinv @ cov_deriv).sum()
+            else:
+                raise NotImplementedError
+            grad_nll_here = chisq_deriv + _norm
+            if np.abs(grad_nll_here.imag / grad_nll_here.real) > 1e-8:
+                warnings.warn("Gradient may not be well-behaved.")
+            grad_nll[here][m] = grad_nll_here.real
+    return grad_nll * scale
 
 
 def get_chisq(gains, data, cov, ant1, ant2, scale=1, norm=1):
