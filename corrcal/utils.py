@@ -58,6 +58,7 @@ def build_baseline_array(
     return antpos[ant_2_inds] - antpos[ant_1_inds]
 
 
+# TODO: rewrite these using the new SplitMat/SplitVec formalism
 def build_gain_mat(gains, ant_1_inds, ant_2_inds):
     """Build the matrix of products of per-antenna gains."""
     complex_gains = build_complex_gains(gains)
