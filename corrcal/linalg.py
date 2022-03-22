@@ -46,6 +46,10 @@ class SplitMat:
         self.data[n_row:,:n_col] = mat.imag
         self.data[n_row:,n_col:] = mat.real
 
+    def __add__(self, other):
+        out = self.data + other.data
+        return SplitMat(out[:self.n_row,:self.n_col] + 1j*out[self.n_row:,:self.n_col])
+
     def __matmul__(self, other):
         if isinstance(other, SplitMat):
             out = self.data @ other.data
@@ -63,6 +67,10 @@ class SplitMat:
 
     def conj(self):
         return SplitMat(self.real - 1j*self.imag)
+
+    def inv(self):
+        out = np.linalg.inv(self.real + 1j*self.imag)
+        return SplitMat(out)
 
     @property
     def real(self):
