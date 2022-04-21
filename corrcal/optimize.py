@@ -29,6 +29,7 @@ def simple_chisq(gain_mat, data, noise, cov):
     scaled_cov = utils.scale_cov_by_gains(cov, gain_mat)
     diag_inds = np.arange(scaled_cov.shape[0])
     scaled_cov[diag_inds, diag_inds] += noise
+    scaled_cov = 0.5*(scaled_cov + scaled_cov.T)
     chisq = data.conj() @ np.linalg.inv(scaled_cov) @ data
     if np.abs(chisq.imag / chisq.real) > 1e-8:
         warnings.warn(
@@ -37,10 +38,18 @@ def simple_chisq(gain_mat, data, noise, cov):
     return chisq.real
 
 
-def simple_nll(
-    gains, data, noise, cov, ant_1_inds, ant_2_inds, norm="simple", scale=None,
-):
-    """Simple negative log-likelihood function.
+def dense_nll(
+    gains: np.ndarray,
+    data: linalg.SplitVec,
+    noise: linalg.SplitMat,
+    cov: linalg.SplitMat,
+    ant_1_inds: np.ndarray,
+    ant_2_inds: np.ndarray,
+    norm: str = "simple",
+    gain_scale: complex = 1,
+    grad_scale: None = None,
+) -> float:
+    """Calculate the negative log-likelihood using dense covariance.
 
     Parameters
     ----------
@@ -49,11 +58,11 @@ def simple_nll(
         the real part of the gains, while the second half of the array should
         contain the imaginary part of the gains.
     data
-        Complex-valued visibility data.
+        Visibilities to calibrate.
     noise
-        One-dimensional array containing the per-baseline noise variance.
+        Per-baseline variance due to thermal noise.
     cov
-        Dense representation of the covariance matrix.
+        Modeled sky covariance.
     ant_1_inds
         Indices specifying which gain to use for the first antenna in each
         visibility.
@@ -63,7 +72,9 @@ def simple_nll(
     norm
         How to normalize the likelihood. "simple" sets the unweighted average
         gain to unity. "det" uses the usual Gaussian likelihood normalization.
-    scale
+    gain_scale
+        Per-antenna gain scaling to be removed before calculating the likelihood.
+    grad_scale
         Not used in this function, but needed for the scipy minimizer.
 
     Returns
@@ -71,29 +82,40 @@ def simple_nll(
     nll
         Negative log-likelihood for the model parameters given the data.
     """
-    gain_mat = utils.build_gain_mat(gains, ant_1_inds, ant_2_inds)
-    chisq = simple_chisq(gain_mat, data, noise, cov)
+    n_ants = gains.size // 2
+    complex_gains = gains[:n_ants] + 1j*gains[n_ants:]
+    complex_gains /= gain_scale
+    gain_mat = gains[ant_1_inds] * gains[ant_2_inds].conj()
+    gain_mat = linalg.SplitMat(np.diag(gain_mat))
+    full_cov = noise + gain_mat @ cov @ gain_mat.conj()
+    full_cov = 0.5 * (full_cov+full_cov.T)
+    chisq = data.conj() @ full_cov.inv() @ data
+    if np.abs(chisq.imag / chisq.real) > 1e-8:
+        warnings.warn("Chi-squared isn't purely real.")
+    chisq = chisq.real
     if norm == "simple":
-        n_ants = gains.size // 2
-        _norm = (
-            gains[n_ants:].sum() ** 2 + (gains[:n_ants].sum() - n_ants) ** 2
-        )
+        _norm = np.sum(gains.imag)**2 + np.sum(gains.real-1)**2
     elif norm == "det":
-        scaled_cov = utils.scale_cov_by_gains(cov, gain_mat)
         try:
-            _norm = (
-                2 * np.log(np.diag(np.linalg.cholesky(scaled_cov)).real).sum()
-            )
+            L = np.linalg.cholesky(full_cov.data)
+            _norm = 2 * np.log(np.diag(L)).sum()
         except np.linalg.LinAlgError:
-            warnings.warn("Covariance is not positive-definite.")
-            _norm = 1e10
+            _norm = 0.5 * np.log(np.linalg.det(cov.data))
     else:
-        raise NotImplementedError
+        _norm = 0
     return chisq + _norm
 
 
-def simple_grad_nll(
-    gains, data, noise, cov, ant_1_inds, ant_2_inds, norm="simple", scale=1,
+def dense_grad_nll(
+    gains: np.ndarray,
+    data: linalg.SplitVec,
+    noise: linalg.SplitMat,
+    cov: linalg.SplitMat,
+    ant_1_inds: np.ndarray,
+    ant_2_inds: np.ndarray,
+    norm: str = "simple",
+    gain_scale: complex = 1,
+    grad_scale: float = 1,
 ):
     """
     Simple function calculating the gradient of the negative log-likelihood.
@@ -115,7 +137,9 @@ def simple_grad_nll(
         Index of the second antenna for each baseline.
     norm
         Normalization scheme to use. See :func:~`simple_nll` for details.
-    scale
+    gain_scale
+        Amount by which the gains have been pre-scaled.
+    grad_scale
         Scaling to apply to the calculated gradient. Intended to be used to
         prevent the minimizer from searching too broad of a space in the
         chi-squared surface.
@@ -130,62 +154,89 @@ def simple_grad_nll(
 
     See Also
     --------
-    :func:~`simple_nll`
+    :func:~`dense_nll`
     """
-    # Setup with the gain parameters.
-    gain_mat = utils.build_gain_mat(gains, ant_1_inds, ant_2_inds)
-    complex_gains = utils.build_complex_gains(gains)
-    n_ants = complex_gains.size
+    # Get some array lengths for proper bookkeeping.
+    n_bls = ant_1_inds.size
+    n_ants = gains.size // 2
 
-    # Apply gains/noise.
-    scaled_cov = utils.scale_cov_by_gains(cov, gain_mat)
-    diag_inds = np.arange(scaled_cov.shape[0])
-    scaled_cov[diag_inds, diag_inds] += noise
+    # Setup the gain matrix.
+    complex_gains = gains[:n_ants] + 1j*gains[n_ants:]
+    complex_gains /= gain_scale
+    gain_mat = complex_gains[ant_1_inds] * complex_gains[ant_2_inds].conj()
+    gain_mat = linalg.SplitMat(np.diag(gain_mat))
+
+    # Construct the full covariance.
+    full_cov = noise + gain_mat @ cov @ gain_mat.conj()
+    full_cov = 0.5*(full_cov + full_cov.T)
     cinv = np.linalg.inv(scaled_cov)
+
+    # Get some auxilliary parameters required for the calculation.
+    re_gain = complex_gains.real
+    im_gain = complex_gains.imag
     weighted_data = cinv @ data
 
     # Calculate the gradient on a per-antenna basis.
     grad_nll = np.zeros_like(gains)
-    for m in range(n_ants):
-        for n in range(2):  # Iterate over real/imag
-            # Figure out which half of the gradient to fill in.
-            here = (slice(None, n_ants), slice(n_ants, None))[n]
+    _norm = 0
+    for i in range(n_ants):
+        for k in range(2):
+            # Determine whether we're looking at the real or imaginary part.
+            here = (slice(None, n_ants), slice(n_ants, None))[k]
 
-            # Calculate the derivatives of the gain matrix and its conjugate.
-            gain_mat_deriv = np.zeros_like(gain_mat)
-            conj_gain_mat_deriv = np.zeros_like(gain_mat_deriv)
-            delta_a1_m = ant_1_inds == m
-            delta_a2_m = ant_2_inds == m
-            ant_1_gains = complex_gains[ant_1_inds[delta_a2_m]]
-            ant_2_gains = complex_gains[ant_2_inds[delta_a1_m]]
-            if n == 0:  # Derivative w.r.t. real part of the gain for antenna m
-                gain_mat_deriv[delta_a1_m] += np.conj(ant_2_gains)
-                gain_mat_deriv[delta_a2_m] += ant_1_gains
-                conj_gain_mat_deriv[delta_a1_m] += ant_2_gains
-                conj_gain_mat_deriv[delta_a2_m] += np.conj(ant_1_gains)
-            else:  # Derivative w.r.t. imag part of the gain for antenna m
-                gain_mat_deriv[delta_a1_m] += 1j * np.conj(ant_2_gains)
-                gain_mat_deriv[delta_a2_m] -= 1j * ant_1_gains
-                conj_gain_mat_deriv[delta_a1_m] -= 1j * ant_2_gains
-                conj_gain_mat_deriv[delta_a2_m] += 1j * np.conj(ant_1_gains)
-            cov_deriv = linalg.diagmul(
-                gain_mat_deriv, linalg.diagmul(cov, gain_mat.conj())
-            )
-            chisq_deriv = weighted_data.conj() @ cov_deriv @ weighted_data
-            if norm == "simple":
-                if n == 0:
-                    _norm = 2 * (complex_gains.real.sum() - n_ants)
-                else:
-                    _norm = 2 * complex_gains.imag.sum()
-            elif norm == "det":
-                _norm = np.diag(cinv @ cov_deriv).sum()
+            # Figure out which visibilities contain this antenna.
+            delta_a1_i = ant_1_inds == i
+            delta_a2_i = ant_2_inds == i
+
+            # Calculate the derivative of the gain matrix.
+            gain_mat_grad = np.zeros(n_bls, dtype=complex)
+            if k == 0:
+                gain_mat_grad[delta_a1_i] = (
+                    re_gain[ant_2_inds][delta_a1_i]
+                    - 1j*im_gain[ant_2_inds][delta_a1_i]
+                )
+                gain_mat_grad[delta_a2_i] = (
+                    re_gain[ant_1_inds][delta_a2_i]
+                    + 1j*im_gain[ant_1_inds][delta_a2_i]
+                )
             else:
-                raise NotImplementedError
-            grad_nll_here = chisq_deriv + _norm
-            if np.abs(grad_nll_here.imag / grad_nll_here.real) > 1e-8:
-                warnings.warn("Gradient may not be well-behaved.")
-            grad_nll[here][m] = grad_nll_here.real
-    return grad_nll * scale
+                gain_mat_grad[delta_a1_i] = (
+                    im_gain[ant_2_inds][delta_a1_i]
+                    + 1j*re_gain[ant_2_inds][delta_a1_i]
+                )
+                gain_mat_grad[delta_a2_i] = (
+                    im_gain[ant_1_inds][delta_a2_i]
+                    - 1j*re_gain[ant_1_inds][delta_a2_i]
+                )
+            gain_mat_grad = linalg.SplitMat(np.diag(gain_mat_grad))
+            cov_grad = (
+                gain_mat_grad @ full_cov @ gain_mat.conj()
+                + gain_mat @ cov @ gain_mat_grad.conj()
+            )
+            grad_nll[here][i] = np.real(
+                weighted_data.conj() @ cov_grad @ weighted_data
+            )
+
+            # Calculate the gradient of the normalization term.
+            if norm == "simple":
+                # TOOD: make sure this is actually the right thing to do.
+                if k == 0:
+                    _norm += 2 * (re_gain.sum()-n_ants) / n_ants
+                else:
+                    _norm += 2 * im_gain.sum()
+            elif norm == "det":
+                _norm = cinv @ cov_grad
+                _norm = np.diag(_norm.real).sum() + np.diag(_norm.imag).sum()
+                grad_nll[here][i] -= _norm
+
+    if norm == "simple":
+        # TODO: see note above.
+        grad_nll -= _norm
+        
+    # Get the sign and scaling right for the gradient.
+    grad_nll = grad_nll[:n_ants] + 1j*grad_nll[n_ants:]
+    grad_nll *= -grad_scale / gain_scale
+    return linalg.SplitVec(grad_nll).data
 
 
 def get_chisq(gains, data, cov, ant1, ant2, scale=1, norm=1):
@@ -228,73 +279,6 @@ def get_chisq(gains, data, cov, ant1, ant2, scale=1, norm=1):
     raw_chisq = data @ (inverse_cov * data)
     norm *= (
         np.sum(gains[1::2]) ** 2 + (np.sum(gains[::2]) - gains.size / 2) ** 2
-    )
-    return raw_chisq + norm
-
-
-def get_chisq_dense(gains, data, noise, sky_cov, ant1, ant2, scale=1, norm=1):
-    """Calculate chi-squared from the dense covariance.
-
-    Parameters
-    ----------
-    gains: np.ndarray of float
-        Diagonal of the gain matrix?
-    data: np.ndarray of float
-        Raw visibility data, split into real and imaginary parts.
-        Even indices correspond to real component, while odd indices
-        correspond to imaginary component.
-    noise: np.ndarray of float
-        Diagonal of the noise variance.
-    sky_cov: np.ndarray of float
-        Dense sky covariance matrix.
-    ant1: np.ndarray of int
-        Array denoting antenna 1 in the visibility.
-    ant2: np.ndarray of int
-        Array denoting antenna 2 in the visibility.
-    scale: float, optional
-        Scale factor applied to the gains (for numerical stability?
-        convergence?).
-    norm: float, optional
-        Factor dictating how much the gain amplitude contributes to
-        the chi-squared calculation.
-
-    Returns
-    -------
-    chisq: float
-        The calculated chi-squared.
-    """
-    gains /= scale
-    sky_cov = sky_cov.copy()  # To be safe with the covariance.
-    if sky_cov.shape[0] != sky_cov.shape[1]:
-        raise ValueError("Sky covariance must be square.")
-    Nbls = sky_cov.shape[0]
-
-    # Apply the gains to the sky covariance.
-    cfuncs.apply_gains_to_matrix(
-        sky_cov.ctypes.data,
-        gains.ctypes.data,
-        ant1.ctypes.data,
-        ant2.ctypes.data,
-        Nbls // 2,
-        Nbls,
-    )
-    sky_cov = sky_cov.T
-    cfuncs.apply_gains_to_matrix(
-        sky_cov.ctypes.data,
-        gains.ctypes.data,
-        ant1.ctypes.data,
-        ant2.ctypes.data,
-        Nbls // 2,
-        Nbls,
-    )
-
-    # Add in the noise.
-    sky_cov = sky_cov.T + noise
-    # Force the covariance to be symmetric (seems a little sus?)
-    sky_cov = 0.5 * (sky_cov + sky_cov.T)
-    raw_chisq = data @ sky_cov @ data
-    norm *= (
-        np.sum(gains[1::2]) ** 2 + (np.sum(gains[::2]) - gains.size // 2) ** 2
     )
     return raw_chisq + norm
 
