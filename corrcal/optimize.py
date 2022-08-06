@@ -3,6 +3,7 @@ import warnings
 
 from . import cfuncs
 from . import linalg
+from . import sparse
 from . import utils
 
 
@@ -130,7 +131,7 @@ def dense_grad_nll(
     noise
         Per-baseline noise variance.
     cov
-        Dense representation of the covariance.
+        Dense representation of the sky covariance.
     ant_1_inds
         Index of the first antenna for each baseline.
     ant_2_inds
@@ -169,7 +170,7 @@ def dense_grad_nll(
     # Construct the full covariance.
     full_cov = noise + gain_mat @ cov @ gain_mat.conj()
     full_cov = 0.5*(full_cov + full_cov.T)
-    cinv = np.linalg.inv(scaled_cov)
+    cinv = np.linalg.inv(full_cov)
 
     # Get some auxilliary parameters required for the calculation.
     re_gain = complex_gains.real
@@ -191,26 +192,22 @@ def dense_grad_nll(
             # Calculate the derivative of the gain matrix.
             gain_mat_grad = np.zeros(n_bls, dtype=complex)
             if k == 0:
-                gain_mat_grad[delta_a1_i] = (
-                    re_gain[ant_2_inds][delta_a1_i]
-                    - 1j*im_gain[ant_2_inds][delta_a1_i]
+                gain_mat_grad[delta_a1_i] = np.conj(
+                    complex_gains[ant_2_inds][delta_a1_i]
                 )
                 gain_mat_grad[delta_a2_i] = (
-                    re_gain[ant_1_inds][delta_a2_i]
-                    + 1j*im_gain[ant_1_inds][delta_a2_i]
+                    complex_gains[ant_1_inds][delta_a2_i]
                 )
             else:
-                gain_mat_grad[delta_a1_i] = (
-                    im_gain[ant_2_inds][delta_a1_i]
-                    + 1j*re_gain[ant_2_inds][delta_a1_i]
+                gain_mat_grad[delta_a1_i] = 1j * np.conj(
+                    complex_gains[ant_2_inds][delta_a1_i]
                 )
-                gain_mat_grad[delta_a2_i] = (
-                    im_gain[ant_1_inds][delta_a2_i]
-                    - 1j*re_gain[ant_1_inds][delta_a2_i]
+                gain_mat_grad[delta_a2_i] = -1j * (
+                    complex_gains[ant_1_inds][delta_a2_i]
                 )
             gain_mat_grad = linalg.SplitMat(np.diag(gain_mat_grad))
             cov_grad = (
-                gain_mat_grad @ full_cov @ gain_mat.conj()
+                gain_mat_grad @ cov @ gain_mat.conj()
                 + gain_mat @ cov @ gain_mat_grad.conj()
             )
             grad_nll[here][i] = np.real(
@@ -239,237 +236,101 @@ def dense_grad_nll(
     return linalg.SplitVec(grad_nll).data
 
 
-def get_chisq(gains, data, cov, ant1, ant2, scale=1, norm=1):
-    """Calculate chi-squared using a Sparse2Level object.
+def nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1):
+    """Calculate the negative log-likelihood.
 
-    We define chi-squared as .. math::
-
-        \\chi^2 = d^\\dagger \\bigl(N + S\\bigr)^{-1} d
-
-    < fill out the rest of this later >
+    Fill this in later.
 
     Parameters
     ----------
-    gains: np.ndarray
-        Complex gains, separated into real and imaginary parts.
-        < add a note about indexing, etc >
-    data: np.ndarray
-        Raw visibility data.
-    cov: :class:`~.Sparse2Level`
-        Sparse covariance matrix.
-    ant1: np.ndarray of int
-        < fill out later >
-    ant2: np.ndarray of int
-        < fill out later >
-    scale: float, optional
-        Amount to scale the gains by (to help with convergence?).
-    norm: float, optional
-        Factor setting how strongly the amplitude of the gains affects
-        the value for chi-squared.
+    gains
+        Double-length array of real numbers. The first half of the array gives
+        the real part of the gains; the second half gives the imaginary part.
+        This array is assumed to be sorted so that it can be sensibly sliced
+        into with ``ant_1_inds`` and ``ant_2_inds``.
+    cov
+        :class:`~.sparse.SparseCov` object containing the sparse representation
+        of the covaraince matrix.
+    data
+        Complex-valued array containing the data sorted into quasi-redundant
+        groups.
+    ant_1_inds
+        Indices of the first antenna in each baseline in the sorted data.
+    ant_2_inds
+        Indices of the second antenna in each baseline in the sorted data.
+    scale
+        Amount that the gains were scaled prior to starting the conjugate
+        gradient routine.
 
     Returns
     -------
-    chisq: float
-        The calculated chi-squared.
+    nll
+        The negative log-likelihood (up to a constant offset).
     """
-    gains /= scale
-    cov = cov.copy()
-    cov.apply_gains(gains, ant1, ant2)
-    inverse_cov = cov.inverse()
-    raw_chisq = data @ (inverse_cov * data)
-    norm *= (
-        np.sum(gains[1::2]) ** 2 + (np.sum(gains[::2]) - gains.size / 2) ** 2
-    )
-    return raw_chisq + norm
+    n_ants = gains.size // 2
+    complex_gains = gains[:n_ants] + 1j*gains[n_ants:]
+    complex_gains /= scale
+    cov.gains = complex_gains[ant_1_inds] * complex_gains[ant_2_inds].conj()
+    cinv, logdet = cov.inv(return_det=True)
+    chisq = data.conj() @ cinv @ data
+    if np.abs(chisq.imag / chisq.real) > 1e-8:
+        warnings.warn("Chi-squared isn't purely real!")
+    return np.real(chisq + logdet)
 
 
-def get_chisq_gradient(gains, data, cov, ant1, ant2, scale=1, norm=1):
-    """Calculate the gradient of chi-squared with respect to antenna gains.
+def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1):
+    """Calculate the gradient of the negative log-likelihood.
 
-    This function calculates the chi-squared gradient according to .. math::
-
-        \\nabla \\chi^2 = 2q^T H' p + {\\rm gain normalization},
-
-    where :math:`H` is the matrix of inverse gains, the prime denotes the
-    derivative with respect to the antenna gains, and the vectors :math:`p`
-    and :math:`q` are defined as: .. math::
-
-        p \\equiv \\bigl(N + H^T C H\\bigr)^{-1} d,
-        q \\equiv C H p.
-
-    In the above equations, :math:`N` is the (diagonal) matrix giving the
-    per-baseline thermal noise variance, :math:`C` is the baseline-baseline
-    covariance one would measure in the absence of noise, and :math:`d` is
-    the visibility data from the instrument. This is Equation 4 in Sievers
-    2017. The normalization term prevents chi-squared from setting the
-    gains arbitrarily high or low.
+    This is the gradient with respect to the real/imaginary per-antenna gains.
+    See Eq. ?? of Pascua+ 22 for details of what is being calculated.
 
     Parameters
     ----------
-    Same as chi-squared params. Update this later.
-
-    Returns
-    -------
-    gradient: np.ndarray
-        Gradient of chi-squared with respect to antenna gains.
+    same as nll. fill this out later.
     """
-    # Apply the gains to the covariance and take the inverse.
-    gains /= scale
-    cov = cov.copy()
-    cov.apply_gains(gains, ant1, ant2)
-    inverse_cov = cov.inverse()
+    # Prepare the gain matrix.
+    n_ants = gains.size // 2
+    complex_gains = gains[:n_ants] + 1j*gains[n_ants:]
+    complex_gains /= scale
+    cov.gains = complex_gains[ant_1_inds] * complex_gains[ant_2_inds].conj()
+    
+    # Prepare some auxiliary matrices/vectors.
+    cinv = cov.inv()
+    wgted_data = cinv @ data
+    src_rhs = cov.src_mat.T.conj() * cov.gains[None,:].conj()
+    diff_rhs = cov.diff_mat.T.conj() * cov.gains[None,:].conj()
 
-    # Calculate the p and q vectors from Sievers 2017 (Equation 4).
-    pvec = inverse_cov * data
-    inv_gain_times_pvec = pvec.copy()
-    cfuncs.apply_gains_to_matrix(
-        inv_gain_times_pvec.ctypes.data,
-        gains.ctypes.data,
-        ant2.ctypes.data,
-        ant1.ctypes.data,
-        inv_gain_times_pvec.size // 2,
-        1,
-    )
-    # This is a little bit of a hack to save some memory.
-    qvec = cov.copy()  # This isn't a vector yet, but...
-    qvec.noise_variance = np.zeros_like(qvec.noise_variance)
-    qvec *= inv_gain_times_pvec  # this gives a *vector*.
+    # Initialize important arrays for the gradient calculation.
+    gradient = np.zeros(2*n_ants, dtype=float)
+    gain_mat_grad = np.zeros_like(cov.gains)
+    cov_grad = np.zeros_like(cinv)
 
-    return _calculate_gradient(gains, pvec, qvec, ant1, ant2, scale, norm)
+    # Calculate the gradient antenna by antenna.
+    # TODO: see if this is the fastest way to calculate the gradient.
+    for ant in range(n_ants):
+        for i, sl in enumerate((slice(None,n_ants), slice(n_ants,None))):
+            delta_ant1 = ant_1_inds == ant
+            delta_ant2 = ant_2_inds == ant
+            gain_mat_grad[:] = 0
+            if i == 0:  # Gradient w.r.t. real part of gains
+                gain_mat_grad[delta_ant1] += gains[ant_2_inds][delta_ant1].conj()
+                gain_mat_grad[delta_ant2] += gains[ant_1_inds][delta_ant2]
+            else:
+                gain_mat_grad[delta_ant1] += 1j*gains[ant_2_inds][delta_ant1].conj()
+                gain_mat_grad[delta_ant2] -= 1j*gains[ant_1_inds][delta_ant2]
 
+            # Calculate Eq. ?? from Pascua+ 22.
+            cov_grad[...] = 0
+            cov_grad += (gain_mat_grad[:,None] * cov.src_mat) @ src_rhs
+            cov_grad += (gain_mat_grad[:,None] * cov.diff_mat) @ diff_rhs
+            cov_grad += cov_grad.T.conj()
 
-def _calculate_gradient(gains, pvec, qvec, ant1, ant2, scale=1, norm=1):
-    """Calculate Equation 4 of Sievers 2017.
+            # Calculate the gradient of the normalization, but do it fast.
+            grad_norm = np.sum(cinv * cov_grad)
+            grad_chisq = -wgted_data.conj() @ cov_grad @ wgted_data
+            grad = grad_norm + grad_chisq
 
-    See :func:`get_chisq_gradient` for a brief discussion of the terms.
-    """
-    Nant = len(set(ant1).union(set(ant2)))
-    gradient = np.zeros(2 * Nant, dtype=float)
-
-    # Extract the gains for ease of reference.
-    re_g1 = gains[2 * ant1]
-    re_g2 = gains[2 * ant2]
-    im_g1 = gains[2 * ant1 + 1]
-    im_g2 = gains[2 * ant2 + 1]
-
-    # Initialize the various derivatives. This method is a bit faster
-    # than Jon's implementation, especially for large arrays.
-    v1_m1r_v2 = np.empty_like(qvec)
-    v1_m1i_v2 = np.empty_like(qvec)
-    v1_m2r_v2 = np.empty_like(qvec)
-    v1_m2i_v2 = np.empty_like(qvec)
-
-    # Real/imaginary slices for notational convenience/clarity.
-    re = slice(0, None, 2)  # Equivalent to [0::2]
-    im = slice(1, None, 2)  # Equivalent to [1::2]
-
-    # Populate the vectors previously initialized.
-    v1_m1r_v2[re] = re_g2 * pvec[re] - im_g2 * pvec[im]
-    v1_m1r_v2[im] = im_g2 * pvec[re] + re_g2 * pvec[im]
-    v1_m1i_v2[re] = im_g2 * pvec[re] + re_g2 * pvec[im]
-    v1_m1i_v2[im] = -re_g2 * pvec[re] + im_g2 * pvec[im]
-
-    v1_m2r_v2[re] = re_g1 * pvec[re] + im_g1 * pvec[im]
-    v1_m2r_v2[im] = -im_g1 * pvec[re] + re_g1 * pvec[im]
-    v1_m2i_v2[re] = im_g1 * pvec[re] - re_g1 * pvec[im]
-    v1_m2i_v2[im] = re_g1 * pvec[re] + im_g1 * pvec[im]
-
-    # TODO: Figure out how to unpack this math to make it make sense.
-    v1_m1r_v2 *= qvec
-    v1_m1i_v2 *= qvec
-    v1_m2r_v2 *= qvec
-    v1_m2i_v2 *= qvec
-
-    # Sum the real and imaginary parts for some reason?
-    v1_m1r_v2 = v1_m1r_v2[re] + v1_m1r_v2[im]
-    v1_m1i_v2 = v1_m1i_v2[re] + v1_m1i_v2[im]
-    v1_m2r_v2 = v1_m2r_v2[re] + v1_m2r_v2[im]
-    v1_m2i_v2 = v1_m2i_v2[re] + v1_m2i_v2[im]
-
-    cfuncs.sum_grads_c(
-        gradient.ctypes.data,
-        v1_m1r_v2.ctypes.data,
-        v1_m1i_v2.ctypes.data,
-        ant1.ctypes.data,
-        v1_m2i_v2.size,
-    )
-    cfuncs.sum_grads_c(
-        gradient.ctypes.data,
-        v1_m2r_v2.ctypes.data,
-        v1_m2i_v2.ctypes.data,
-        ant2.ctyptes.data,
-        v1_m2i_v2.size,
-    )
-
-    # Finish calculating the gradient.
-    gain_norm_real = (
-        2 * (np.sum(gains[re]) - gains.size / 2) / (gains.size / 2)
-    )
-    gain_norm_imag = 2 * np.sum(gains[im])
-    return (-2 * gradient + norm * (gain_norm_real + gain_norm_imag)) / scale
-
-
-def get_chisq_gradient_dense(
-    gains, data, noise, sky_cov, ant1, ant2, scale=1, norm=1
-):
-    """Calculate chi-squared for the dense covariance.
-
-    This function uses the actual thermal noise and sky covariance matrices
-    directly, instead of using a :class:`~.Sparse2Level` object as is done
-    in :func:`get_chisq_gradient`.
-
-    Parameters
-    ----------
-    Same as :func:`get_chisq_dense`. Fill in later.
-
-    Returns
-    -------
-    chisq_gradient
-        Fill this in later.
-
-    See Also
-    --------
-    :func:`get_chisq_gradient`
-    """
-    # Setup for applying gains to sky covariance, but don't do it in-place.
-    gains = gains / scale
-    cov = sky_cov.copy()
-    Nbls = sky_cov.shape[0]
-
-    # Calculate H^T C H to compute the p-vector from Eq'n 4 of Sievers 2017.
-    # TODO: make sure the gain convention is correct.
-    cfuncs.apply_gains_to_matrix(
-        cov.ctypes.data,
-        gains.ctypes.data,
-        ant1.ctypes.data,
-        ant2.ctypes.data,
-        Nbls // 2,
-        Nbls,
-    )
-    cov = cov.T
-    cfuncs.apply_gains_to_matrix(
-        cov.ctypes.data,
-        gains.ctypes.data,
-        ant1.ctypes.data,
-        ant2.ctypes.data,
-        Nbls // 2,
-        Nbls,
-    )
-
-    # Complete the covariance matrix and calculate p.
-    cov += noise
-    cov = 0.5 * (cov + cov.T)  # Enforce symmetry just in case...
-    pvec = np.linalg.inv(cov) @ data
-
-    # Now calculate the q-vector from Equation 4, q = C H p.
-    qvec = pvec.copy()
-    cfuncs.apply_gains_to_matrix(
-        qvec.ctypes.data,
-        gains.ctypes.data,
-        ant2.ctypes.data,
-        ant1.ctypes.data,
-        Nbls // 2,
-        1,
-    )
-    qvec = cov @ qvec
-    return _calculate_gradient(gains, pvec, qvec, ant1, ant2, scale, norm)
+            if np.abs(grad.imag / grad.real) > 1e-8:
+                warnings.warn("Gradient isn't purely real!")
+            gradient[sl][ant] = grad.real
+    return gradient / scale

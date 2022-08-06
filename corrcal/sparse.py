@@ -6,6 +6,119 @@ import numpy as np
 from . import cfuncs
 from . import linalg
 
+class SparseCov:
+    """
+    Fill this out in full later. Rough notes for now:
+
+    Attributes
+    ----------
+    noise
+        The diagonal of the noise variance matrix. Expected to be
+        a 1-d array of complex numbers.
+    gains
+        The diagonal of the gain matrix. Also expected to be a 1-d
+        array of complex numbers.
+    src_mat
+        The :math:`$\sigma$` matrix containing information about point
+        sources. See Eq. ?? of Pascua+ 22. Expected shape (n_bls, n_src).
+    diff_mat
+        The :math:`$\Delta$` matrix containing information about the
+        sky angular power spectrum and array redundancy. See Eq. ?? of
+        Pascua+ 22. Expected shape (n_bls, n_grp*n_eig), with n_eig the
+        number of eigenmodes per quasi-redundant group. (n_eig should be
+        1 for a perfectly redundant array.)
+    edges
+        Array of integers denoting the edges of each quasi-redundant
+        group.
+    n_grp
+        The number of quasi-redundant groups in the array.
+    n_src
+        The number of sources used in the model covariance.
+    n_eig
+        The number of eigenmodes used to represent each quasi-redundant group.
+    n_bls
+        The total number of baselines in the array.
+    """
+
+    def __init__(self, noise, gains, src_mat, diff_mat, edges):
+        """
+        Decide how to split docs between class and constructor.
+        """
+        self.noise = noise
+        self.gains = gains
+        self.src_mat = src_mat
+        self.diff_mat = diff_mat
+        self.edges = edges
+        self.n_grp = edges.size - 1
+        self.n_src = src_mat.shape[1]
+        self.n_eig = diff_mat.shape[1] // self.n_grp
+        self.n_bls = diff_mat.shape[0]
+
+
+    def inv(self, return_det=False):
+        """
+        Efficiently invert the covariance with the Woodbury identity.
+
+        This implementation of the inversion routine assumes that each quasi-
+        redundant group is statistically independent of every other group (i.e.
+        it is assumed that the phased beam kernel only negligibly overlaps for
+        any pair of quasi-redundant groups).
+
+        Parameters
+        ----------
+        return_det
+            Whether to accumulate the determinant while doing the inversion.
+
+        Returns
+        -------
+        Cinv
+            Shape (n_bls,n_bls) inverse covariance matrix.
+        det
+            Logarithm of the determinant of the covariance matrix. Only
+            returned if ``return_det`` is set to True.
+        """
+        if return_det:
+            logdet = 0
+        
+        # Initialize the inverse covariance matrix.
+        Cinv = np.zeros((self.n_bls, self.n_bls), dtype=complex)
+        
+        # Calculate G @ Delta for use in the first part of the inversion.
+        # (Doing it this way is faster than matmul.)
+        GD = self.gains[:,None] * self.diff_mat
+        
+        # Invert the quasi-redundant blocks.
+        # NOTE: this will need to be updated if we remove the assumption that
+        # quasi-redundant groups are mutually independent (i.e. we'll have to
+        # actually do two rounds of Woodbury inversion).
+        # TODO: parallelize this
+        for grp, (start, stop) in enumerate(zip(self.edges, self.edges[1:])):
+            # Figure out which section of the Delta matrix to use.
+            left = grp * self.n_eig
+            right = left + self.n_eig
+            
+            # Calculate the small block for this quasi-redundant group.
+            block = GD[start:stop,left:right].copy()
+            block = np.diag(self.noise[start:stop]) + block @ block.T.conj()
+            # See Eq. ?? of Pascua+ 22 for details on determinant calculation.
+            if return_det:
+                logdet += 2 * np.log(np.diag(np.linalg.cholesky(block))).sum()
+            Cinv[start:stop,start:stop] = np.linalg.inv(block)
+
+        # Calculate G @ sigma for the second part of the inversion.
+        GS = self.gains[:,None] * self.src_mat
+        # TODO: parallelize this over blocks too
+        CGS = Cinv @ GS
+        # Finish the inversion with these next two lines.
+        tmp = np.eye(self.n_src) + GS.T.conj() @ CGS
+        Cinv -= CGS @ np.linalg.inv(tmp) @ CGS.T.conj()
+        
+        # Finish calculating the determinant if requested.
+        if return_det:
+            logdet += 2 * np.log(np.diag(np.linalg.cholesky(tmp))).sum()
+            return Cinv, np.real(logdet)
+        return Cinv
+
 
 class Sparse2Level:
     """
@@ -121,6 +234,7 @@ class Sparse2Level:
 
     def inverse(self):
         """Invert the sparse covariance and return the result."""
+        # TODO: rewrite this from scratch, do the math.
         inverse = self.copy()
         inverse.isinv = not self.isinv
         inverse.noise_variance = 1 / self.noise_variance
