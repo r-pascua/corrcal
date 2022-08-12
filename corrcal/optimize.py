@@ -89,7 +89,7 @@ def dense_nll(
     gain_mat = gains[ant_1_inds] * gains[ant_2_inds].conj()
     gain_mat = linalg.SplitMat(np.diag(gain_mat))
     full_cov = noise + gain_mat @ cov @ gain_mat.conj()
-    full_cov = 0.5 * (full_cov+full_cov.T)
+    full_cov = (full_cov+full_cov.T) * 0.5
     chisq = data.conj() @ full_cov.inv() @ data
     if np.abs(chisq.imag / chisq.real) > 1e-8:
         warnings.warn("Chi-squared isn't purely real.")
@@ -169,8 +169,8 @@ def dense_grad_nll(
 
     # Construct the full covariance.
     full_cov = noise + gain_mat @ cov @ gain_mat.conj()
-    full_cov = 0.5*(full_cov + full_cov.T)
-    cinv = np.linalg.inv(full_cov)
+    full_cov = (full_cov+full_cov.T) * 0.5
+    cinv = full_cov.inv()
 
     # Get some auxilliary parameters required for the calculation.
     re_gain = complex_gains.real
@@ -216,7 +216,7 @@ def dense_grad_nll(
 
             # Calculate the gradient of the normalization term.
             if norm == "simple":
-                # TOOD: make sure this is actually the right thing to do.
+                # TODO: make sure this is actually the right thing to do.
                 if k == 0:
                     _norm += 2 * (re_gain.sum()-n_ants) / n_ants
                 else:
@@ -326,7 +326,7 @@ def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1):
             cov_grad += cov_grad.T.conj()
 
             # Calculate the gradient of the normalization, but do it fast.
-            grad_norm = np.sum(cinv * cov_grad)
+            grad_norm = np.sum(cinv * cov_grad.T)
             grad_chisq = -wgted_data.conj() @ cov_grad @ wgted_data
             grad = grad_norm + grad_chisq
 
