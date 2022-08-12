@@ -21,7 +21,7 @@ def build_source_model(
     beam: Union[UVBeam, str] = None,
     sources: SkyModel = None,
 ) -> np.ndarray:
-    """Construct the point-source matrix.
+    r"""Construct the point-source matrix.
 
     This is the :math:`\sigma` matrix in Eq. ?? of <ref paper>. In particular,
     each matrix element has the following form:
@@ -55,13 +55,13 @@ def build_source_model(
         of meters. Does not need to be provided if ``data`` is provided. Should
         be shape (Nbls,3) and in topocentric (ENU) coordinates.
     data
-        ``UVData`` object or path to a file that can be loaded into a ``UVData``
-        object. Does not need to be provided if ``freq_array``,
+        ``UVData`` object or path to a file that can be loaded into a
+        ``UVData`` object. Does not need to be provided if ``freq_array``,
         ``telescope_location``, and either ``lst_array`` or ``time_array`` are
         all provided.
     beam
-        ``UVBeam`` object or path to a file that can be loaded into a ``UVBeam``
-        object.
+        ``UVBeam`` object or path to a file that can be loaded into a
+        ``UVBeam`` object.
     sources
         ``SkyModel`` object containing information about the point source
         catalog (positions, fluxes, etc). Some pre-processing should be done
@@ -72,18 +72,18 @@ def build_source_model(
     -------
     source_model
         Array with shape (Ntimes, Nfreqs, Npols, Nbls, Nsrc) representing the
-        :math:`\sigma` matrix from Eq. ?? of <ref paper> at each time, frequency,
-        and polarization.
+        :math:`\sigma` matrix from Eq. ?? of <ref paper> at each time,
+        frequency, and polarization.
 
     Notes
     -----
-    The calculated array will *not* be sorted by redundancy. In order to use the
-    output of this function to create a ``UVCov`` object, you must sort the array
-    appropriately after it is calculated (or provided a sorted baseline array or
-    ``UVData`` object that has had its metadata adjusted in accordance with a
-    grouping by redundancy). For the greatest control, it is recommended to
-    provide a ``UVData`` object that has already had a number of adjustments made
-    based on its metadata.
+    The calculated array will *not* be sorted by redundancy. In order to use
+    the output of this function to create a ``UVCov`` object, you must sort
+    the array appropriately after it is calculated (or provided a sorted
+    baseline array or ``UVData`` object that has had its metadata adjusted in
+    accordance with a grouping by redundancy). For the greatest control, it is
+    recommended to provide a ``UVData`` object that has already had a number
+    of adjustments made based on its metadata.
     """
     # Setup
     if beam is None or sources is None:
@@ -97,7 +97,7 @@ def build_source_model(
             time_array, np.ndarray
         )
         loc_ok = isinstance(telescope_location, np.ndarray)
-        bls_ok = isinstance(baseline_array, np.ndarray)
+        bls_ok = isinstance(baselines, np.ndarray)
         if not all(freqs_ok, times_ok, loc_ok, bls_ok):
             raise ValueError(
                 "Not enough information provided to construct model."
@@ -121,6 +121,7 @@ def build_source_model(
             antpos=antpos,
             antnums=antnums,
         )
+        _ = len(baseline_array)  # Just to make flake8 not complain.
 
     if not isinstance(beam, UVBeam):
         uvbeam = UVBeam()

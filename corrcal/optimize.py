@@ -30,7 +30,7 @@ def simple_chisq(gain_mat, data, noise, cov):
     scaled_cov = utils.scale_cov_by_gains(cov, gain_mat)
     diag_inds = np.arange(scaled_cov.shape[0])
     scaled_cov[diag_inds, diag_inds] += noise
-    scaled_cov = 0.5*(scaled_cov + scaled_cov.T)
+    scaled_cov = 0.5 * (scaled_cov + scaled_cov.T)
     chisq = data.conj() @ np.linalg.inv(scaled_cov) @ data
     if np.abs(chisq.imag / chisq.real) > 1e-8:
         warnings.warn(
@@ -74,7 +74,7 @@ def dense_nll(
         How to normalize the likelihood. "simple" sets the unweighted average
         gain to unity. "det" uses the usual Gaussian likelihood normalization.
     gain_scale
-        Per-antenna gain scaling to be removed before calculating the likelihood.
+        Per-antenna gain scaling to be divided out before the calculation.
     grad_scale
         Not used in this function, but needed for the scipy minimizer.
 
@@ -84,18 +84,18 @@ def dense_nll(
         Negative log-likelihood for the model parameters given the data.
     """
     n_ants = gains.size // 2
-    complex_gains = gains[:n_ants] + 1j*gains[n_ants:]
+    complex_gains = gains[:n_ants] + 1j * gains[n_ants:]
     complex_gains /= gain_scale
     gain_mat = gains[ant_1_inds] * gains[ant_2_inds].conj()
     gain_mat = linalg.SplitMat(np.diag(gain_mat))
     full_cov = noise + gain_mat @ cov @ gain_mat.conj()
-    full_cov = (full_cov+full_cov.T) * 0.5
+    full_cov = (full_cov + full_cov.T) * 0.5
     chisq = data.conj() @ full_cov.inv() @ data
     if np.abs(chisq.imag / chisq.real) > 1e-8:
         warnings.warn("Chi-squared isn't purely real.")
     chisq = chisq.real
     if norm == "simple":
-        _norm = np.sum(gains.imag)**2 + np.sum(gains.real-1)**2
+        _norm = np.sum(gains.imag) ** 2 + np.sum(gains.real - 1) ** 2
     elif norm == "det":
         try:
             L = np.linalg.cholesky(full_cov.data)
@@ -162,14 +162,14 @@ def dense_grad_nll(
     n_ants = gains.size // 2
 
     # Setup the gain matrix.
-    complex_gains = gains[:n_ants] + 1j*gains[n_ants:]
+    complex_gains = gains[:n_ants] + 1j * gains[n_ants:]
     complex_gains /= gain_scale
     gain_mat = complex_gains[ant_1_inds] * complex_gains[ant_2_inds].conj()
     gain_mat = linalg.SplitMat(np.diag(gain_mat))
 
     # Construct the full covariance.
     full_cov = noise + gain_mat @ cov @ gain_mat.conj()
-    full_cov = (full_cov+full_cov.T) * 0.5
+    full_cov = (full_cov + full_cov.T) * 0.5
     cinv = full_cov.inv()
 
     # Get some auxilliary parameters required for the calculation.
@@ -195,9 +195,9 @@ def dense_grad_nll(
                 gain_mat_grad[delta_a1_i] = np.conj(
                     complex_gains[ant_2_inds][delta_a1_i]
                 )
-                gain_mat_grad[delta_a2_i] = (
-                    complex_gains[ant_1_inds][delta_a2_i]
-                )
+                gain_mat_grad[delta_a2_i] = complex_gains[ant_1_inds][
+                    delta_a2_i
+                ]
             else:
                 gain_mat_grad[delta_a1_i] = 1j * np.conj(
                     complex_gains[ant_2_inds][delta_a1_i]
@@ -218,7 +218,7 @@ def dense_grad_nll(
             if norm == "simple":
                 # TODO: make sure this is actually the right thing to do.
                 if k == 0:
-                    _norm += 2 * (re_gain.sum()-n_ants) / n_ants
+                    _norm += 2 * (re_gain.sum() - n_ants) / n_ants
                 else:
                     _norm += 2 * im_gain.sum()
             elif norm == "det":
@@ -229,9 +229,9 @@ def dense_grad_nll(
     if norm == "simple":
         # TODO: see note above.
         grad_nll -= _norm
-        
+
     # Get the sign and scaling right for the gradient.
-    grad_nll = grad_nll[:n_ants] + 1j*grad_nll[n_ants:]
+    grad_nll = grad_nll[:n_ants] + 1j * grad_nll[n_ants:]
     grad_nll *= -grad_scale / gain_scale
     return linalg.SplitVec(grad_nll).data
 
@@ -268,7 +268,7 @@ def nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1):
         The negative log-likelihood (up to a constant offset).
     """
     n_ants = gains.size // 2
-    complex_gains = gains[:n_ants] + 1j*gains[n_ants:]
+    complex_gains = gains[:n_ants] + 1j * gains[n_ants:]
     complex_gains /= scale
     cov.gains = complex_gains[ant_1_inds] * complex_gains[ant_2_inds].conj()
     cinv, logdet = cov.inv(return_det=True)
@@ -290,39 +290,43 @@ def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1):
     """
     # Prepare the gain matrix.
     n_ants = gains.size // 2
-    complex_gains = gains[:n_ants] + 1j*gains[n_ants:]
+    complex_gains = gains[:n_ants] + 1j * gains[n_ants:]
     complex_gains /= scale
     cov.gains = complex_gains[ant_1_inds] * complex_gains[ant_2_inds].conj()
-    
+
     # Prepare some auxiliary matrices/vectors.
     cinv = cov.inv()
     wgted_data = cinv @ data
-    src_rhs = cov.src_mat.T.conj() * cov.gains[None,:].conj()
-    diff_rhs = cov.diff_mat.T.conj() * cov.gains[None,:].conj()
+    src_rhs = cov.src_mat.T.conj() * cov.gains[None, :].conj()
+    diff_rhs = cov.diff_mat.T.conj() * cov.gains[None, :].conj()
 
     # Initialize important arrays for the gradient calculation.
-    gradient = np.zeros(2*n_ants, dtype=float)
+    gradient = np.zeros(2 * n_ants, dtype=float)
     gain_mat_grad = np.zeros_like(cov.gains)
     cov_grad = np.zeros_like(cinv)
 
     # Calculate the gradient antenna by antenna.
     # TODO: see if this is the fastest way to calculate the gradient.
     for ant in range(n_ants):
-        for i, sl in enumerate((slice(None,n_ants), slice(n_ants,None))):
+        for i, sl in enumerate((slice(None, n_ants), slice(n_ants, None))):
             delta_ant1 = ant_1_inds == ant
             delta_ant2 = ant_2_inds == ant
             gain_mat_grad[:] = 0
             if i == 0:  # Gradient w.r.t. real part of gains
-                gain_mat_grad[delta_ant1] += gains[ant_2_inds][delta_ant1].conj()
+                gain_mat_grad[delta_ant1] += gains[ant_2_inds][
+                    delta_ant1
+                ].conj()
                 gain_mat_grad[delta_ant2] += gains[ant_1_inds][delta_ant2]
             else:
-                gain_mat_grad[delta_ant1] += 1j*gains[ant_2_inds][delta_ant1].conj()
-                gain_mat_grad[delta_ant2] -= 1j*gains[ant_1_inds][delta_ant2]
+                gain_mat_grad[delta_ant1] += (
+                    1j * gains[ant_2_inds][delta_ant1].conj()
+                )
+                gain_mat_grad[delta_ant2] -= 1j * gains[ant_1_inds][delta_ant2]
 
             # Calculate Eq. ?? from Pascua+ 22.
             cov_grad[...] = 0
-            cov_grad += (gain_mat_grad[:,None] * cov.src_mat) @ src_rhs
-            cov_grad += (gain_mat_grad[:,None] * cov.diff_mat) @ diff_rhs
+            cov_grad += (gain_mat_grad[:, None] * cov.src_mat) @ src_rhs
+            cov_grad += (gain_mat_grad[:, None] * cov.diff_mat) @ diff_rhs
             cov_grad += cov_grad.T.conj()
 
             # Calculate the gradient of the normalization, but do it fast.

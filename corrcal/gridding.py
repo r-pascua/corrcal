@@ -61,7 +61,9 @@ def make_redundant_groups(u, v, tol=0.01, do_fof=True):
             ``u[sorting_key][is_conj] *= -1``
     """
     # TODO: this will need to be expanded if we allow w =/= 0.
+    # TODO: write unit tests for edge cases
     is_conj = v < 0
+    is_conj |= np.isclose(v, 0) & (u < 0)
     uv = np.vstack([u, v]).T
     uv[is_conj] *= -1
     if PYFOF and do_fof:
@@ -148,14 +150,7 @@ def calc_reds_from_uvs(uv, tol=0.01):
 
 
 def group_by_redundancy(
-    data,
-    noise,
-    uvws,
-    ant1,
-    ant2,
-    tol=0.1,
-    do_fof=True,
-    bl_axis=0,
+    data, noise, uvws, ant1, ant2, tol=0.1, do_fof=True, bl_axis=0,
 ):
     """Re-order the data, noise, and antenna arrays by redundancy.
 
@@ -165,10 +160,10 @@ def group_by_redundancy(
             ``ndarray`` containing the data to be grouped by redundancy. Can be
             any shape, but must have an axis over baselines.
         uvws
-            ``ndarray`` containing the baseline vectors in units of wavelengths.
-            Must have shape (Nbls, Ndim), with Ndim either 2 or 3.
+            ``ndarray`` containing the baseline vectors in units of
+            wavelengths. Must have shape (Nbls, Ndim), with Ndim either 2 or 3.
         ant1
-            ``ndarray`` enumerating the 
+            ``ndarray`` enumerating the
 
 
     Returns
@@ -176,6 +171,7 @@ def group_by_redundancy(
         < todo >
     """
     # Figure out how to sort the data.
+    u, v = uvws[:, :2].T
     sorting_key, edges, is_conj = make_redundant_groups(u, v, tol, do_fof)
 
     # First, handle the antennas.
@@ -190,7 +186,7 @@ def group_by_redundancy(
         noise = noise[sorting_key]
     else:
         temp_noise = noise.copy()
-
+        _ = temp_noise.sum()  # Just to make flake8 not complain.
 
     # Next, conjugate antennas and data where appropriate.
 

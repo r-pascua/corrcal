@@ -38,10 +38,9 @@ class UVCov(UVBase):
             description="Number of point-source terms.",
             expected_type=int,
         )
+        desc = "Number of eigenmodes used to describe each redundant group."
         self._Nmodes = UVParameter(
-            "Nmodes",
-            description="Number of eigenmodes used to describe each redundant group.",
-            expected_type=int,
+            "Nmodes", description=desc, expected_type=int,
         )
         self._Nblocks = UVParameter(
             "Nblocks",
@@ -81,10 +80,11 @@ class UVCov(UVBase):
 
         desc = (
             "Array of eigenvectors describing each quasi-redundant block in "
-            "the 'diffuse' or 'redundant' terms. This should be a block-diagonal "
-            "matrix with each block giving the eigenvectors describing that "
-            "block. Has shape (Ntimes, Nfreqs, Npols, Nbls, Nmodes), is type "
-            "complex float, and is dimensionless. See Eq. X in <paper>."
+            "the 'diffuse' or 'redundant' terms. This should be a "
+            "block-diagonal matrix with each block giving the eigenvectors "
+            "describing that block. Has shape (Ntimes, Nfreqs, Npols, Nbls, "
+            "Nmodes), is type complex float, and is dimensionless. See Eq. X "
+            "in <paper>."
         )
         self._modes = UVParameter(
             "modes",

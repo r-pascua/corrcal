@@ -6,8 +6,9 @@ import numpy as np
 from . import cfuncs
 from . import linalg
 
+
 class SparseCov:
-    """
+    r"""
     Fill this out in full later. Rough notes for now:
 
     Attributes
@@ -54,7 +55,6 @@ class SparseCov:
         self.n_eig = diff_mat.shape[1] // self.n_grp
         self.n_bls = diff_mat.shape[0]
 
-
     def expand(self, apply_gains=False, add_noise=False):
         """Return the dense covariance."""
         cov = (
@@ -62,11 +62,10 @@ class SparseCov:
             + self.diff_mat @ self.diff_mat.T.conj()
         )
         if apply_gains:
-            cov = self.gains[:,None] * cov * self.gains[None,:].conj()
+            cov = self.gains[:, None] * cov * self.gains[None, :].conj()
         if add_noise:
             cov += np.diag(self.noise)
         return cov
-
 
     def inv(self, return_det=False):
         """
@@ -92,14 +91,14 @@ class SparseCov:
         """
         if return_det:
             logdet = 0
-        
+
         # Initialize the inverse covariance matrix.
         Cinv = np.zeros((self.n_bls, self.n_bls), dtype=complex)
-        
+
         # Calculate G @ Delta for use in the first part of the inversion.
         # (Doing it this way is faster than matmul.)
-        GD = self.gains[:,None] * self.diff_mat
-        
+        GD = self.gains[:, None] * self.diff_mat
+
         # Invert the quasi-redundant blocks.
         # NOTE: this will need to be updated if we remove the assumption that
         # quasi-redundant groups are mutually independent (i.e. we'll have to
@@ -109,23 +108,23 @@ class SparseCov:
             # Figure out which section of the Delta matrix to use.
             left = grp * self.n_eig
             right = left + self.n_eig
-            
+
             # Calculate the small block for this quasi-redundant group.
-            block = GD[start:stop,left:right].copy()
+            block = GD[start:stop, left:right].copy()
             block = np.diag(self.noise[start:stop]) + block @ block.T.conj()
             # See Eq. ?? of Pascua+ 22 for details on determinant calculation.
             if return_det:
                 logdet += 2 * np.log(np.diag(np.linalg.cholesky(block))).sum()
-            Cinv[start:stop,start:stop] = np.linalg.inv(block)
+            Cinv[start:stop, start:stop] = np.linalg.inv(block)
 
         # Calculate G @ sigma for the second part of the inversion.
-        GS = self.gains[:,None] * self.src_mat
+        GS = self.gains[:, None] * self.src_mat
         # TODO: parallelize this over blocks too
         CGS = Cinv @ GS
         # Finish the inversion with these next two lines.
         tmp = np.eye(self.n_src) + GS.T.conj() @ CGS
         Cinv -= CGS @ np.linalg.inv(tmp) @ CGS.T.conj()
-        
+
         # Finish calculating the determinant if requested.
         if return_det:
             logdet += 2 * np.log(np.diag(np.linalg.cholesky(tmp))).sum()

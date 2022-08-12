@@ -1,5 +1,6 @@
 import numpy as np
 import warnings
+import yaml
 
 from pyuvdata import UVData, UVCal
 from scipy.optimize import fmin_cg, minimize
@@ -14,10 +15,12 @@ class CorrCal:
     Some things to think about...
     1) The proposed build is *not* BDA compliant
         - Time/baseline axis not separable for BDA in a single file/object
+
     2) Current implementation is per-time, per-freq, per-pol
         - Can treat as embarrassingly parallelizable task, but polarized
           calibration is planned for the near future
         - Do we parallelize here, or let the dispatcher parallelize?
+
     3) CHORD will likely inherit CHIME data format
     4) Will also want to deploy on HIRAX; need to know their conventions
     5) Want to eventually add GPU acceleration
@@ -91,7 +94,7 @@ class CorrCal:
 
     def __init__(
         self,
-        *
+        *,
         data=None,
         cal=None,
         cov=None,
@@ -104,7 +107,7 @@ class CorrCal:
         self.minimizer = minimizer
         self.normalization = normalization
         self.redundancy_tol = redundancy_tol
-        
+
         # Initialize all the attributes to be filled in later.
         self.Ntimes = None
         self.Nfreqs = None
@@ -135,7 +138,7 @@ class CorrCal:
         self.populate_attributes(
             data=data, cal=cal, cov=cov, file_format=file_format
         )
-        
+
     def populate_attributes(self, data, cal, cov, file_format):
         if file_format.lower() == "hera":
             self._populate_from_hera_data(uvdata=data, uvcal=cal, uvcov=cov)
@@ -150,14 +153,13 @@ class CorrCal:
         # don't need special handling for the different file formats. That
         # said, we do need to provide it to the above _populate_x methods
         # to ensure compliance between the data sets.
-        self.Nsrc = uvcov.Nsrc
-        self.Neig = uvcov.Neig
-        self.Ngrp = uvcov.Ngrp
-        self.ant_1_inds = uvcov.ant_1_inds
-        self.ant_2_inds = uvcov.ant_2_inds
-        self.edges = uvcov.edges
-        self.cov = uvcov.cov  # TODO: decide on a convention for this
-
+        self.Nsrc = cov.Nsrc
+        self.Neig = cov.Neig
+        self.Ngrp = cov.Ngrp
+        self.ant_1_inds = cov.ant_1_inds
+        self.ant_2_inds = cov.ant_2_inds
+        self.edges = cov.edges
+        self.cov = cov.cov  # TODO: decide on a convention for this
 
     def _populate_from_hera_data(self, uvdata, uvcal, uvcov):
         # Assume we're using UVData/UVCal objects.
@@ -194,20 +196,18 @@ class CorrCal:
             self.Ntimes, self.Nfreqs, self.Njones, self.Nants_data
         )  # This makes it easy to make the gain matrix.
         self.gains = np.zeros(
-            (self.Ntimes, self.Nfreqs, self.Njones, 2*self.Nants_data),
-            dtype=float
+            (self.Ntimes, self.Nfreqs, self.Njones, 2 * self.Nants_data),
+            dtype=float,
         )  # Fitting routine must act on real/imag parts independently.
-        self.gains[...,:self.Nants_data] = complex_gains.real
-        self.gains[...,self.Nants_data:] = complex_gains.imag
+        self.gains[..., : self.Nants_data] = complex_gains.real
+        self.gains[..., self.Nants_data :] = complex_gains.imag
         self.flags = uvdata.flag_array.reshape(self.data.shape)
         self.n_samples = uvdata.n_samples.reshape(self.data.shape)
         self.data[self.flags] = 0  # Ignore flagged data in calibration.
         self.n_samples[self.flags] = 0
-        
 
     def _populate_from_chime_data(self, data, cal, cov):
         raise NotImplementedError
-
 
     def _populate_from_hirax_data(self, data, cal, cov):
         raise NotImplementedError
@@ -233,18 +233,16 @@ class CorrCal:
             contents = yaml.load(cfg.read(), Loader=yaml.SafeLoader)
         return CorrCal(**contents)
 
-
     def calibrate(
-        self,
-        minimizer=None,
-        normalization=None,
-        polarized=False,
-        refant=None,
+        self, minimizer=None, normalization=None, polarized=False, refant=None,
     ):
         minimizer = minimizer or self.minimizer
         normalization = normalization or self.normalization
         if refant is not None:
-            callback = lambda gains: self.rephase_to_ant(gains, refant)
+
+            def callback(gains):
+                return self.rephase_to_ant(gains, refant)
+
         else:
             callback = None
 
@@ -256,34 +254,28 @@ class CorrCal:
                 for fi in range(self.Nfreqs):
                     for pi, pol in enumerate(self.polarization_array):
                         ji = [-5, -6, -7, -8].index(pol)
-                        args = (
-                            self.data[ti,fi,pi],
-                        )
+                        args = (self.data[ti, fi, pi],)
                         calibration = optimize(
                             self.nll,
-                            self.gains[ti,fi,ji],
+                            self.gains[ti, fi, ji],
                             args=args,
                             method=minimizer,
                             jac=self.grad_nll,
                             hess=self.curv_nll,
                             callback=callback,
                         )
-                        self.gains[ti,fi,pi,:] = calibration.x
+                        self.gains[ti, fi, pi, :] = calibration.x
                         if not calibration.success:
                             warnings.warn(calibration.message)
-
 
     def nll(self):
         return optimize.dense_nll if self.dense else optimize.nll
 
-
     def grad_nll(self):
         return optimize.dense_grad_nll if self.dense else optimize.grad_nll
 
-
     def curv_nll(self):
         return None  # Not yet supported.
-
 
     def rephase_to_ant(self, gains, refant):
         index = np.argwhere(self.ant_array == refant)
