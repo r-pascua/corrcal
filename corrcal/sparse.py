@@ -55,6 +55,19 @@ class SparseCov:
         self.n_bls = diff_mat.shape[0]
 
 
+    def expand(self, apply_gains=False, add_noise=False):
+        """Return the dense covariance."""
+        cov = (
+            self.src_mat @ self.src_mat.T.conj()
+            + self.diff_mat @ self.diff_mat.T.conj()
+        )
+        if apply_gains:
+            cov = self.gains[:,None] * cov * self.gains[None,:].conj()
+        if add_noise:
+            cov += np.diag(self.noise)
+        return cov
+
+
     def inv(self, return_det=False):
         """
         Efficiently invert the covariance with the Woodbury identity.
