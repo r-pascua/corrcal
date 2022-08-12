@@ -62,6 +62,9 @@ class SplitMat:
         else:
             raise NotImplementedError
 
+    def __mul__(self, other):
+        return SplitMat(other * (self.real + 1j*self.imag))
+
     def copy(self):
         return SplitMat(self.real + 1j*self.imag)
 
@@ -71,6 +74,14 @@ class SplitMat:
     def inv(self):
         out = np.linalg.inv(self.real + 1j*self.imag)
         return SplitMat(out)
+
+    @property
+    def T(self):
+        return SplitMat(self.real.T + 1j*self.imag.T)
+
+    @property
+    def H(self):
+        return SplitMat(self.real.T - 1j*self.imag.T)
 
     @property
     def real(self):
