@@ -4,6 +4,7 @@ from pyuvdata.uvbase import UVBase
 import pyuvdata.parameter as uvp
 from pyuvdata.parameter import UVParameter
 
+
 class UVCov(UVBase):
     """
     A class for interfacing with CorrCal-style covariance matrices.
@@ -16,6 +17,7 @@ class UVCov(UVBase):
     ``pyuvdata.UVParameter`` objects
         < fill this out later >
     """
+
     def __init__(self):
         # Basic counting parameters
         self._Ntimes = UVParameter(
@@ -32,7 +34,9 @@ class UVCov(UVBase):
             "Npols", description="Number of polarizations.", expected_type=int
         )
         self._Nsrc = UVParameter(
-            "Nsrc", description="Number of point-source terms.", expected_type=int
+            "Nsrc",
+            description="Number of point-source terms.",
+            expected_type=int,
         )
         self._Nmodes = UVParameter(
             "Nmodes",
@@ -48,10 +52,9 @@ class UVCov(UVBase):
         # Start array-like parameters
         desc = (
             "Array of point-source terms that contribute to the covariance. "
-            "Has shape (Nblts, Nfreqs, Npols, Nsrc), is type complex float, "
+            "Has shape (Ntimes, Nfreqs, Npols, Nbls, Nsrc), is type complex, "
             "in units of Jy. See Eq. X in <paper link placeholder>."
         )
-        # Cov/pcov have shape (Nbls,Nsrc) so that cov @ cov.T has right shape.
         self._sources = UVParameter(
             "sources",
             description=desc,
@@ -61,7 +64,7 @@ class UVCov(UVBase):
 
         desc = (
             "Array of 'diffuse' or 'redundant' terms that contribute to the "
-            "covariance. Has shape (Ntimes, Nfreqs, Npols, Nblocks, Nmodes), "
+            "covariance. Has shape (Ntimes, Nfreqs, Npols, Nbls, Nmodes), "
             "is type complex float, in units of Jy. In particular, this array "
             "specifies the eigenvalues for each quasi-redundant group at each "
             "time, frequency, and polarization. See Eq. X in <paper>."
@@ -72,7 +75,7 @@ class UVCov(UVBase):
         self._eigvals = UVParameter(
             "eigvals",
             description=desc,
-            form=("Ntimes", "Nfreqs", "Npols", "Nblocks", "Nmodes"),
+            form=("Ntimes", "Nfreqs", "Npols", "Nbls", "Nmodes"),
             expected_type=complex,
         )
 
@@ -89,3 +92,10 @@ class UVCov(UVBase):
             form=("Ntimes", "Nfreqs", "Npols", "Nbls", "Nmodes"),
             expected_type=complex,
         )
+
+        # Noise will be shaped like [time, freq, pol, bl]
+
+        # notes: define the object first, and let the object determine how
+        # the filetype is written. axes most frequently sliced over should
+        # be the last axes. prioritize shapes for operations with worst
+        # scaling.
