@@ -4,3 +4,7 @@
 coverage\.xml
 *\.so
 build*
+*\.png
+*\.pdf
+*\.fits
+*\.ipynb_checkpoints
