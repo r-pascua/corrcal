@@ -34,7 +34,7 @@ double woodbury_with_det(
      *  k
      *      Number of columns in the U matrix.
      */
-
+    return 0;
 }
 
 
@@ -71,14 +71,6 @@ void woodbury(
 }
 
 
-void matmul(complex *left, complex *right, complex *out, int a, int b, int c) {
-    /*
-     *
-     */
-
-}
-
-
 void tril_inv(complex *mat, complex *out, int n) {
     /*
      *  void tril_inv(complex *mat, complex *out, int n)
@@ -112,42 +104,6 @@ void many_tril_inv(
     for (int i=0; i<n_blocks; i++) {
         int offset = i*block_size*block_size;
         tril_inv(blocks+offset, out+offset, block_size);
-    }
-}
-
-
-void many_irregular_tril_inv(
-    complex *blocks, complex *out, int *block_sizes, int n_blocks
-) {
-    /*
-     *  void many_irregular_tril_inv(
-     *      complex *blocks, complex *out, int *block_sizes, int n_blocks
-     *  )
-     *
-     *  Compute the inverse of a collection of lower-triangular matrices of
-     *  varying sizes.
-     *
-     *  Parameters
-     *  ----------
-     *  blocks
-     *      Matrices to invert.
-     *  out
-     *      Where to write the inverses.
-     *  block_sizes
-     *      Size of each matrix to invert.
-     *  n_blocks
-     *      Number of matrices to invert.
-     */
-    int offsets[n_blocks];
-    int offset = 0;
-    for (int i=0; i<n_blocks; i++) {
-        offsets[i] = offset;
-        offset += block_sizes[i] * block_sizes[i];
-    }
-
-    #pragma omp parallel for
-    for (int i=0; i<n_blocks; i++) {
-        tril_inv(blocks+offsets[i], out+offsets[i], block_sizes[i]);
     }
 }
 
@@ -246,70 +202,63 @@ void many_chol_inplace(complex *blocks, int block_size, int n_blocks) {
 }
 
 
-void many_irregular_chol(
-    complex *blocks, complex *out, int *block_sizes, int n_blocks
+void make_small_block(
+    complex *noise_diag, complex *diffuse_mat, complex *out, int n_eig,
+    int start, int stop
 ) {
     /*
-     *  void many_irregular_chol(
-     *      complex *blocks, complex *out, int *block_sizes, int n_blocks
+     *  void make_small_block(
+     *      complex *noise_diag, complex *diffuse_mat, int n_eig, int n_bl
      *  )
      *
-     *  Calculate the Cholesky decomposition of a collection of matrices of
-     *  varying sizes.
-     *
-     *  Parameters
-     *  ----------
-     *  blocks
-     *      Array of matrices.
-     *  out
-     *      Where to write the Cholesky decomposition of the input matrices.
-     *  block_sizes
-     *      Size of each matrix.
-     *  n_blocks
-     *      Number of matrices.
-     */ 
-    int offsets[n_blocks];
-    int offset = 0;
-    for (int i=0; i<n_blocks; i++) {
-        offsets[i] = offset;
-        offset += block_sizes[i] * block_sizes[i];
-    }
-
-    #pragma omp parallel for
-    for (int i=0; i<n_blocks; i++) {
-        cholesky(blocks+offsets[i], out+offsets[i], block_sizes[i]);
+     *  Construct the small block 1 + D^\dag N^-1 D (see Eq. ? of Pascua+ 23).
+     *  It is assumed that ``diffuse_mat`` has already been scaled by the gain
+     *  matrix prior to calling this routine.
+     */
+    for (int i=0; i<n_eig; i++) {
+        // We only need to do the upper triangular part, since it's Hermitian
+        for (int j=i; j<n_eig; j++) {
+            complex sum = 0;
+            for (int k=start; k<stop; k++) {
+                complex tmp = (
+                    conj(diffuse_mat[k*n_eig+i]) * diffuse_mat[k*n_eig+j]
+                );
+                sum += tmp / noise_diag[k];
+            }
+            out[i*n_eig+j] = sum;
+            if (i == j) {
+                out[i*n_eig+j] += 1;
+            } else {
+                out[j*n_eig+i] = conj(sum);
+            }
+        }
     }
 }
 
 
-void many_irregular_chol_inplace(
-    complex *blocks, int *block_sizes, int n_blocks
+void make_all_small_blocks(
+    complex *noise_diag, complex *diffuse_mat, complex *out, int *edges,
+    int n_eig, int n_block
 ) {
     /*
-     *  void many_irregular_chol_inplace(
-     *      complex *blocks, int *block_sizes, int n_blocks
+     *  void make_all_small_blocks(
+     *      complex *noise_diag, complex *diffuse_mat, complex *out,
+     *      long *edges, int n_eig, int n_block
      *  )
      *
-     *  Calculate the Cholesky decomposition of a list of matrices in-place.
-     *
-     *  Parameters
-     *  ----------
-     *  blocks
-     *      Array of matrices.
-     *  block_sizes
-     *      Size of each matrix. Note that these are 32-bit integers.
-     *  n_blocks
-     *      Number of matrices.
+     *  Make all ``(n_eig,n_eig)`` blocks, given the block-diagonal diffuse
+     *  matrix and the noise variance.
      */
-    int offsets[n_blocks];
-    int offset = 0;
-    for (int i=0; i<n_blocks; i++) {
-        offsets[i] = offset;
-        offset += block_sizes[i] * block_sizes[i];
-    }
-
     #pragma omp parallel for
-    for (int i=0; i<n_blocks; i++) {
-        cholesky_inplace(blocks+offsets[i], block_sizes[i]);
+    for (int i=0; i<n_block; i++) {
+        int n_bl = edges[i+1] - edges[i];
+        make_small_block(
+            noise_diag,
+            diffuse_mat,
+            out + i*n_eig*n_eig,
+            n_eig,
+            edges[i],
+            edges[i+1]
+        );
     }
 }
