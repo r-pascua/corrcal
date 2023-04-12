@@ -3,8 +3,8 @@ from copy import deepcopy
 
 import numpy as np
 
-from . import cfuncs
 from . import linalg
+from . import utils
 
 
 class SparseCov:
@@ -16,18 +16,18 @@ class SparseCov:
     noise
         The diagonal of the noise variance matrix. Expected to be
         a 1-d array of complex numbers.
-    gains
-        The diagonal of the gain matrix. Also expected to be a 1-d
-        array of complex numbers.
     src_mat
         The :math:`$\sigma$` matrix containing information about point
-        sources. See Eq. ?? of Pascua+ 22. Expected shape (n_bls, n_src).
+        sources. See Eq. ?? of Pascua+ 23. Expected shape ``(n_bls, n_src)``.
     diff_mat
         The :math:`$\Delta$` matrix containing information about the
         sky angular power spectrum and array redundancy. See Eq. ?? of
-        Pascua+ 22. Expected shape (n_bls, n_grp*n_eig), with n_eig the
-        number of eigenmodes per quasi-redundant group. (n_eig should be
-        1 for a perfectly redundant array.)
+        Pascua+ 23. If not including information about correlations between
+        distinct quasi-redundant groups, then the expected shape is
+        ``(n_bls, n_eig)``, and the matrix is interpreted as the
+        block-diagonal entries of the diffuse matrix; otherwise, the shape
+        should be ``(n_bls, n_grp*n_eig)``, and the matrix is interpreted
+        as the full diffuse matrix.
     edges
         Array of integers denoting the edges of each quasi-redundant
         group.
@@ -41,33 +41,140 @@ class SparseCov:
         The total number of baselines in the array.
     """
 
-    def __init__(self, noise, gains, src_mat, diff_mat, edges):
+    def __init__(self, noise, src_mat, diff_mat, edges, n_eig):
         """
         Decide how to split docs between class and constructor.
         """
         self.noise = noise
-        self.gains = gains
         self.src_mat = src_mat
         self.diff_mat = diff_mat
-        self.edges = edges
+        self.edges = np.array(edges, dtype="int32")
         self.n_grp = edges.size - 1
+        self.n_bls = src_mat.shape[0]
         self.n_src = src_mat.shape[1]
-        self.n_eig = diff_mat.shape[1] // self.n_grp
-        self.n_bls = diff_mat.shape[0]
+        self.n_eig = n_eig
+        self.diff_is_diag = diff_mat.shape == (self.n_bls, n_eig)
+        self.isinv = False
+        if not self.diff_is_diag:
+            if diff_mat.shape != (self.n_bls, self.n_grp*n_eig):
+                raise ValueError(
+                    "Diffuse matrix shape is not understood. See class "
+                    "docstring for information on expected shape."
+                )
+        
+    def __matmul__(self, other):
+        """Multiply by a vector on the right."""
+        raise NotImplementedError("Coming soon.")
 
-    def expand(self, apply_gains=False, add_noise=False):
-        """Return the dense covariance."""
-        cov = (
-            self.src_mat @ self.src_mat.T.conj()
-            + self.diff_mat @ self.diff_mat.T.conj()
+    def copy(self):
+        """Return a copy of the class instance."""
+        return SparseCov(
+            noise=self.noise,
+            src_mat=self.src_mat,
+            diff_mat=self.diff_mat,
+            edges=self.edges,
+            n_eig=self.n_eig,
         )
-        if apply_gains:
-            cov = self.gains[:, None] * cov * self.gains[None, :].conj()
-        if add_noise:
-            cov += np.diag(self.noise)
-        return cov
+            
+    def expand(self):
+        """Return the dense covariance."""
+        if self.diff_is_diag:
+            diff_mat = np.zeros(
+                (self.n_bls, self.n_grp*self.n_eig), dtype=complex
+            )
+            for grp in range(self.n_grp):
+                start, stop = self.edges[grp:grp+2]
+                left, right = np.arange(grp, grp+2) * self.n_eig
+                diff_mat[start:stop,left:right] = self.diff_mat[start:stop]
+        else:
+            diff_mat = self.diff_mat
+
+        cov = (
+            self.src_mat @ self.src_mat.T.conj() + diff_mat @ diff_mat.T.conj()
+        )
+        if self.isinv:
+            return np.diag(self.noise) - cov
+        return np.diag(self.noise) + cov
 
     def inv(self, return_det=False):
+        """Invert the covariance with the Woodbury identity.
+
+        Parameters
+        ----------
+        return_det
+            Whether to accumulate the determinant during the inversion.
+
+        Returns
+        -------
+        Cinv
+            Inverse of the covariance matrix stored in a sparse matrix.
+        logdet
+            Logarithm of the determinant. Returned if ``return_det == True``.
+        """
+        if return_det and self.isinv:
+            raise NotImplementedError(
+                "The determinant should only be needed when inverting the "
+                "covariance, not when recovering the covariance from the "
+                "inverse."
+            )
+
+        if self.diff_is_diag:
+            return self._diag_inv(return_det=return_det)
+        else:
+            raise NotImplementedError("Work in progress.")
+            return self._full_inv(return_det=return_det)
+
+    def _diag_inv(self, return_det=False):
+        """Inversion routine for when the diffuse matrix is block-diagonal."""
+        # The noise is independent of the gains, so we can ignore it here.
+        if return_det:
+            logdet = 0
+
+        # Initialize a new SparseCov
+        Cinv = self.copy()
+        Cinv.isinv = not self.isinv
+        
+        # Calculate 1 + D^\dag G^\dag Ninv DG.
+        small_blocks = np.zeros(
+            (self.n_grp, self.n_eig, self.n_eig), dtype=complex
+        )
+        utils.make_small_blocks(
+            noise_diag=self.noise,
+            diffuse_mat=diff_mat,
+            out=small_blocks,
+            edges=self.edges,
+            n_eig=self.n_eig,
+            n_block=self.n_grp,
+        )
+        if self.isinv:
+            small_blocks = np.eye(self.n_eig)[None,...] - small_blocks
+        else:
+            small_blocks += np.eye(self.n_eig)[None,...]
+        small_blocks = np.linalg.cholesky(small_blocks)
+        if return_det:
+            logdet += np.sum(
+                [np.log(np.diag(block)) for block in small_blocks]
+            )
+
+        # This is faster than using np.linalg.inv
+        small_inv = linalg.many_tri_inv(small_blocks)
+        
+        # Calculate Ninv D L_D^{-1\dag}
+        tmp = self.noise[:,None] * diff_mat
+        new_diff_mat = linalg.block_multiply(
+            small_blocks=small_inv,
+            mat=tmp.T.conj(),
+            edges=self.edges,
+        ).T.conj()
+        Cinv.diff_mat = new_diff_mat
+
+        # TODO: finish this
+
+    def _full_inv(self, return_det=False):
+        """Inversion routine for non-block-diagonal diffuse matrix."""
+        raise NotImplementedError("Work in progress.")
+
+    def old_inv(self, return_det=False):
         """
         Efficiently invert the covariance with the Woodbury identity.
 
@@ -95,10 +202,6 @@ class SparseCov:
         # Initialize the inverse covariance matrix.
         Cinv = np.zeros((self.n_bls, self.n_bls), dtype=complex)
 
-        # Calculate G @ Delta for use in the first part of the inversion.
-        # (Doing it this way is faster than matmul.)
-        GD = self.gains[:, None] * self.diff_mat
-
         # Invert the quasi-redundant blocks.
         # NOTE: this will need to be updated if we remove the assumption that
         # quasi-redundant groups are mutually independent (i.e. we'll have to
@@ -110,19 +213,16 @@ class SparseCov:
             right = left + self.n_eig
 
             # Calculate the small block for this quasi-redundant group.
-            block = GD[start:stop, left:right].copy()
+            block = self.diff_mat[start:stop, left:right].copy()
             block = np.diag(self.noise[start:stop]) + block @ block.T.conj()
             # See Eq. ?? of Pascua+ 22 for details on determinant calculation.
             if return_det:
                 logdet += 2 * np.log(np.diag(np.linalg.cholesky(block))).sum()
             Cinv[start:stop, start:stop] = np.linalg.inv(block)
 
-        # Calculate G @ sigma for the second part of the inversion.
-        GS = self.gains[:, None] * self.src_mat
-        # TODO: parallelize this over blocks too
-        CGS = Cinv @ GS
-        # Finish the inversion with these next two lines.
-        tmp = np.eye(self.n_src) + GS.T.conj() @ CGS
+        # Finish the inversion with these next few lines.
+        CGS = Cinv @ self.src_mat
+        tmp = np.eye(self.n_src) + self.src_mat.T.conj() @ CGS
         Cinv -= CGS @ np.linalg.inv(tmp) @ CGS.T.conj()
 
         # Finish calculating the determinant if requested.

@@ -226,9 +226,7 @@ void make_small_block(
                 sum += tmp / noise_diag[k];
             }
             out[i*n_eig+j] = sum;
-            if (i == j) {
-                out[i*n_eig+j] += 1;
-            } else {
+            if (i != j) {
                 out[j*n_eig+i] = conj(sum);
             }
         }
@@ -262,3 +260,6 @@ void make_all_small_blocks(
         );
     }
 }
+
+
+void block_multiply
