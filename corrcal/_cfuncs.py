@@ -28,10 +28,10 @@ cholesky_inplace = lib.cholesky_inplace
 cholesky_inplace.argtypes = [ct.c_void_p, ct.c_int]
 
 many_chol = lib.many_chol
-many_chol.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.c_int]
+many_chol.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_int, ct.c_int]
 
 tril_inv = lib.tril_inv
 tril_inv.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_int]
 
 many_tril_inv = lib.many_tril_inv
-many_tril_inv.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.c_int]
+many_tril_inv.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_int, ct.c_int]
