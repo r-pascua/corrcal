@@ -35,3 +35,13 @@ tril_inv.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_int]
 
 many_tril_inv = lib.many_tril_inv
 many_tril_inv.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_int, ct.c_int]
+
+make_small_block = lib.make_small_block
+make_small_block.argtypes = [
+    ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.c_int, ct.c_int, ct.c_int
+]
+
+make_all_small_blocks = lib.make_all_small_blocks
+make_all_small_blocks.argtypes = [
+    ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.c_int, ct.c_int
+]

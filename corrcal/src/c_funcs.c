@@ -211,7 +211,7 @@ void make_small_block(
      *      complex *noise_diag, complex *diffuse_mat, int n_eig, int n_bl
      *  )
      *
-     *  Construct the small block 1 + D^\dag N^-1 D (see Eq. ? of Pascua+ 23).
+     *  Construct the small block D^\dag N^-1 D (see Eq. ? of Pascua+ 23).
      *  It is assumed that ``diffuse_mat`` has already been scaled by the gain
      *  matrix prior to calling this routine.
      */
@@ -226,9 +226,7 @@ void make_small_block(
                 sum += tmp / noise_diag[k];
             }
             out[i*n_eig+j] = sum;
-            if (i == j) {
-                out[i*n_eig+j] += 1;
-            } else {
+            if (i != j) {
                 out[j*n_eig+i] = conj(sum);
             }
         }
@@ -262,3 +260,6 @@ void make_all_small_blocks(
         );
     }
 }
+
+
+void block_multiply(){}
