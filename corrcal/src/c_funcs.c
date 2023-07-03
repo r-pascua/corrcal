@@ -510,7 +510,8 @@ void make_small_block(
 
 
 void make_all_small_blocks(
-    complex *noise_diag, complex *diffuse_mat, complex *out, long *edges, int n_eig, int n_block
+    complex *noise_diag, complex *diffuse_mat, complex *out,
+    long *edges, int n_eig, int n_block
 ) {
     /*
      *  void make_all_small_blocks(
