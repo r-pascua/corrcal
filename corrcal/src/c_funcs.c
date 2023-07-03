@@ -14,9 +14,59 @@ struct sparse_cov *init_cov(
     int n_eig,
     int n_src,
     int n_grp,
-    int *edges,
+    long *edges,
     int isinv
 ) {
+    /*
+     *  struct sparse_cov *init_cov(
+     *      complex *noise,
+     *      complex *diff_mat,
+     *      complex *src_mat,
+     *      int n_bl,
+     *      int n_eig,
+     *      int n_src,
+     *      int n_grp,
+     *      long *edges,
+     *      int isinv
+     *  )
+     *
+     *  Routine for initializing a sparse covariance structure.
+     *
+     *  Parameters
+     *  ----------
+     *  noise
+     *      Diagonal of noise variance matrix.
+     *  diff_mat
+     *      Block-diagonal elements of the diffuse matrix, sorted by redundant
+     *      groups. Should have shape (n_bl, n_eig). See discussion in Section
+     *      ?? of Pascua+ 2023 for details.
+     *  src_mat
+     *      Source matrix, sorted by redundant groups. Should have shape
+     *      (n_bl, n_src). See discussion in Section ?? of Pascua+ 2023 for
+     *      details.
+     *  n_bl
+     *      Number of baselines in the data.
+     *  n_eig
+     *      Number of eigenmodes used for each redundant group in the diffuse
+     *      matrix.
+     *  n_src
+     *      Number of sources used in the sky model.
+     *  n_grp
+     *      Number of redundant groups.
+     *  edges
+     *      Array indexing the edges of each redundant group. For example,
+     *      edges[i] gives the starting index of redundant group i.
+     *  isinv
+     *      Whether the covariance has been inverted (i.e., whether the source
+     *      and diffuse matrices are primed, as discussed in Section ?? of
+     *      Pascua+ 2023).
+     *
+     *  Returns
+     *  -------
+     *  sparse_cov
+     *      Structure containing all of the information necessary for working
+     *      with the sparse representation of the covariance.
+     */
     struct sparse_cov *cov = (struct sparse_cov *)malloc(sizeof(struct sparse_cov));
     cov->noise = noise;
     cov->diff_mat = diff_mat;
@@ -33,6 +83,28 @@ struct sparse_cov *init_cov(
 
 
 void matmul(complex *left, complex *right, complex *out, int a, int b, int c) {
+    /*
+     *  void mamtul(
+     *      *complex left, complex *right, complex *out, int a, int b, int c
+     *  )
+     *
+     *  Parallelized routine for performing out = left @ right.
+     *
+     *  Parameters
+     *  ----------
+     *  left, right
+     *      Matrices to be multiplied together. Left has shape (a,b), and
+     *      right has shape (b,c).
+     *  out
+     *      Where to write the output of the matrix product left @ right.
+     *      Must have shape (a,c).
+     *  a
+     *      Number of rows in left.
+     *  b
+     *      Number of columns in left and rows in right.
+     *  c
+     *      Number of columns in right.
+     */
     #pragma omp parallel for
     for (int ij=0; ij<a*c; ij++) {
         int i = ij / c;
@@ -51,10 +123,43 @@ void mymatmul(
     int stridec, int m, int n, int l
 ) {
     /*
-     *  Matrix multiplication that supports block-multiplication. For regular
+     *  void matmul(
+     *      complex *left, complex *right, complex *out,
+     *      int stridea, int strideb, int stridec,
+     *      int m, int n, int l
+     *  )
+     *
+     *  Matrix multiplication that supports block-multiplication.
+     *  For regular
      *  matrix multiplication, with shape(left) = (m,n), shape(right) = (n,l),
      *  set stridea = n, strideb = l, stridec = l.
      *
+     *  Parameters
+     *  ----------
+     *  left, right
+     *      Matrices to multiply together.
+     *  out
+     *      Where to write the output of the matrix product.
+     *  stridea
+     *      Number of columns in left.
+     *  strideb
+     *      Number of rows in right.
+     *  stridec
+     *      Number of columns in out.
+     *  m
+     *      Number of rows contained in this block of left.
+     *  n
+     *      Number of columns contained in this block of right.
+     *  l
+     *      Number of columns in this block of left and number of rows in
+     *      this block of right.
+     *
+     *  Notes
+     *  -----
+     *  When used for performing block-multiplication, this function can only
+     *  multiply one block with one other block. For regular matrix
+     *  multiplication, where left has shape (m,n) and right has shape (n,l),
+     *  set stridea=n, strideb=l, stridec=l.
      */
 
     for (int i=0; i<m; i++){
@@ -71,10 +176,41 @@ void mymatmul(
 
 void block_multiply(
     complex *blocks, complex *diffuse_mat, complex *out, long *edges,
-    int n_eig, int n_grp, int n
+    int n_eig, int n_grp
 ) {
     /*
-     *  Multiply diffuse matrix by small block matrices from the left.
+     *  void block_multiply(
+     *      complex *blocks, complex *diffuse_mat, complex *out,
+     *      long *edges, int n_eig, int n_grp
+     *  )
+     *
+     *  Multiply small blocks by diffuse matrix from the left.
+     *
+     *  Parameters
+     *  ----------
+     *  blocks
+     *      Array of small square matrices sorted by redundant groups. The
+     *      array should have shape (n_grp, n_eig, n_eig) (i.e., it contains
+     *      n_grp square blocks each with shape (n_eig, n_eig)).
+     *  diffuse_mat
+     *      Diffuse matrix sorted into redundant groups, with shape (n, n_eig).
+     *  out
+     *      Where to write the product. Should have shape (n_bl, n_eig).
+     *  edges
+     *      Array specifying the edges of each redundant group. For example,
+     *      edges[i] gives the start of group i.
+     *  n_eig
+     *      Number of eigenmodes used to describe each redundant group.
+     *  n_grp
+     *      Number of redundant groups.
+     *
+     *  Notes
+     *  -----
+     *  This function is meant to be used in the first application of the
+     *  Woodbury identity in the inversion routine: it performs the operation
+     *  out = diffuse_mat @ blocks block-by-block. See discussion in Section
+     *  ?? of Pascua+ 2023 for details. (This is used for Step 1b in the
+     *  prelim presentation, slide 45.)
      */
     for (int grp=0; grp<n_grp; grp++) {
         mymatmul(
@@ -97,7 +233,43 @@ void mult_src_by_blocks(
     int n_bl, int n_src, int n_eig, int n_grp
 ) {
     /*
-     *  Block multiplication of small Cholesky decomp and source matrix.
+     *  void mult_src_by_blocks(
+     *      complex *blocks_H, complex *src_mat, complex *out, long *edges,
+     *      int n_bl, int n_src, int n_eig, int n_grp
+     *  )
+     *
+     *  Multiply source matrix by block-diagonal matrix from the left.
+     *
+     *  Parameters
+     *  ----------
+     *  blocks_H
+     *      Hermitian conjugate of the block-diagonal entries in the "inverse"
+     *      diffuse matrix. Should have shape (n_bl, n_eig).
+     *  src_mat
+     *      Source matrix with shape (n_bl, n_src).
+     *  out
+     *      Where to write the output of the matrix product.
+     *  edges
+     *      Array specifying the edges of each redundant group. For example,
+     *      edges[i] gives the start of group i.
+     *  n_bl
+     *      Number of baselines in the data.
+     *  n_src
+     *      Number of sources used in the sky model.
+     *  n_eig
+     *      Number of eigenmodes used for each redundant group.
+     *  n_grp
+     *      Number of redundant groups.
+     *
+     *  Notes
+     *  -----
+     *  This function is meant to be used in the second application of the
+     *  Woodbury identity in the inversion routine. It performs the matrix
+     *  multiplication of the "inverse" diffuse matrix and the source matrix
+     *  through repeated matrix-vector multiplications between the redundant
+     *  blocks and the source vectors. See discussion in Section ?? of Pascua+
+     *  2023 for details. (This is used in Step 2a in the prelim presentation,
+     *  slide 49.)
      */
     for (int grp=0; grp<n_grp; grp++) {
         for (int src=0; src<n_src; src++) {
@@ -122,6 +294,15 @@ void tril_inv(complex *mat, complex *out, int n) {
      *  void tril_inv(complex *mat, complex *out, int n)
      *
      *  Invert a lower-triangular (n,n) matrix.
+     *
+     *  Parameters
+     *  ----------
+     *  mat
+     *      Lower-triangular matrix to invert.
+     *  out
+     *      Where to write the inverse.
+     *  n
+     *      Number of rows/columns in the matrix.
      */
     for (int i=0; i<n; i++) {
         out[i*n+i] = 1 / mat[i*n+i];
@@ -138,9 +319,20 @@ void tril_inv(complex *mat, complex *out, int n) {
 
 void many_tril_inv(complex *mat, complex *out, int n, int n_block) {
     /*
-     *  void many_tril_inv(complex *mat, complex *out, int n, int n_block
+     *  void many_tril_inv(complex *mat, complex *out, int n, int n_block)
      *
-     *  Invert n_block lower-triangular matrices each with shape (n,n).
+     *  Invert n_block lower-triangular matrices in parallel.
+     *
+     *  Parameters
+     *  ----------
+     *  mat
+     *      Array of matrices to invert, with shape (n_block, n, n).
+     *  out
+     *      Where to write the output. Should have the same shape as mat.
+     *  n
+     *      Number of rows/columns in each block.
+     *  n_block
+     *      Number of matrices to invert.
      */
     #pragma omp parallel for
     for (int i=0; i<n_block; i++) {
@@ -154,6 +346,15 @@ void cholesky(complex *mat, complex *out, int n) {
      *  void cholesky(complex *mat, complex *out, int n)
      *
      *  Compute the Cholesky decomposition of an (n,n) Hermitian matrix.
+     *
+     *  Parameters
+     *  ----------
+     *  mat
+     *      Matrix to perform Cholesky decomposition on.
+     *  out
+     *      Where to write the Cholesky decomposition.
+     *  n
+     *      Number of rows/columns in the input matrix.
      */
     for (int i=0; i<n; i++) {
         for (int j=0; j<=i; j++) {
@@ -182,6 +383,13 @@ void cholesky_inplace(complex *mat, int n) {
      *  void cholesky_inplace(complex *mat, int n)
      *
      *  Compute the Cholesky decomposition of an (n,n) matrix in-place.
+     *
+     *  Parameters
+     *  ----------
+     *  mat
+     *      Matrix to perform in-place Cholesky decomposition on.
+     *  n
+     *      Number of rows/columns in the input matrix.
      */
     for (int i=0; i<n; i++) {
         for (int j=0; j<=i; j++) {
@@ -200,6 +408,25 @@ void cholesky_inplace(complex *mat, int n) {
 
 
 void many_chol(complex *blocks, complex *out, int block_size, int n_blocks) {
+    /*
+     *  void many_chol(
+     *      complex *blocks, complex *out, int block_size, int n_blocks
+     *  )
+     *
+     *  Perform Cholesky decomposition on many matrices in parallel.
+     *
+     *  Parameters
+     *  ----------
+     *  blocks
+     *      Array of matrices to perform Cholesky decomposition on. Should
+     *      have shape (n_blocks, block_size, block_size).
+     *  out
+     *      Where to write the output.
+     *  block_size
+     *      Number of rows/columns in each matrix.
+     *  n_blocks
+     *      Number of matrices to decompose.
+     */
     #pragma omp parallel for
     for (int i=0; i<n_blocks; i++) {
         int offset = i * block_size * block_size;
@@ -212,7 +439,17 @@ void many_chol_inplace(complex *blocks, int block_size, int n_blocks) {
     /*
      *  void many_chol(complex *blocks, int *block_sizes, int n_blocks)
      *
-     *  Calculate the Cholesky decomposition of a list of matrices in-place.
+     *  Perform in-place Cholesky decomposition on many matrices in parallel.
+     *
+     *  Parameters
+     *  ----------
+     *  blocks
+     *      Array of matrices to perform Cholesky decomposition on. Should
+     *      have shape (n_blocks, block_size, block_size).
+     *  block_size
+     *      Number of rows/columns in each matrix.
+     *  n_blocks
+     *      Number of matrices to decompose.
      */
     #pragma omp parallel for
     for (int i=0; i<n_blocks; i++) {
@@ -223,8 +460,39 @@ void many_chol_inplace(complex *blocks, int block_size, int n_blocks) {
 
 
 void make_small_block(
-    complex *noise_diag, complex *diffuse_mat, complex *out, int n_eig, int start, int stop
+    complex *noise_diag, complex *diffuse_mat, complex *out,
+    int n_eig, int start, int stop
 ) {
+    /*
+     *  void make_small_block(
+     *      complex *noise_diag, complex *diffuse_mat, complex *out,
+     *      int n_eig, int start, int stop
+     *  )
+     *
+     *  Make one small block matrix as part of the inversion routine.
+     *
+     *  Parameters
+     *  ----------
+     *  noise_diag
+     *      Diagonal of the noise variance matrix.
+     *  diffuse_mat
+     *      Diffuse matrix sorted into redundant groups.
+     *  out
+     *      Where to write the output.
+     *  n_eig
+     *      Number of eigenmodes used for each redundant group.
+     *  start
+     *      Starting index for this redundant group.
+     *  stop
+     *      Ending index for this redundant group.
+     *
+     *  Notes
+     *  -----
+     *  This function performs the operation out = diff_mat.H @ Ninv @ diff_mat
+     *  for one redundant group as part of the first application of the
+     *  Woodbury identity. See the discussion in Section ?? of Pascua+ 2023
+     *  for details.
+     */
     for (int i=0; i<n_eig; i++) {
         for (int j=i; j<n_eig; j++) {
             complex sum = 0;
@@ -244,6 +512,37 @@ void make_small_block(
 void make_all_small_blocks(
     complex *noise_diag, complex *diffuse_mat, complex *out, long *edges, int n_eig, int n_block
 ) {
+    /*
+     *  void make_all_small_blocks(
+     *      complex *noise_diag, complex *diffuse_mat, complex *out,
+     *      long *edges, int n_eig, int n_block
+     *  )
+     *
+     *  Make all small blocks for use in inversion routine.
+     *
+     *  Parameters
+     *  ----------
+     *  noise_diag
+     *      Diagonal of the noise variance matrix.
+     *  diffuse_mat
+     *      Diffuse matrix sorted into redundant groups.
+     *  out
+     *      Where to write the output.
+     *  edges
+     *      Array specifying the edges of each redundant group. For example,
+     *      edges[i] gives the start of group i.
+     *  n_eig
+     *      Number of eigenmodes used for each redundant group.
+     *  n_block
+     *      Number of redundant groups.
+     *
+     *  Notes
+     *  -----
+     *  This function performs the operation out = diff_mat.H @ Ninv @ diff_mat
+     *  for all redundant groups as part of the first application of the
+     *  Woodbury identity. See the discussion in Section ?? of Pascua+ 2023
+     *  for details.
+     */
     for (int i=0; i<n_block; i++) {
         make_small_block(
             noise_diag,
@@ -257,7 +556,23 @@ void make_all_small_blocks(
 }
 
 
-void sparse_cov_times_vec(struct sparse_cov *cov, complex *vec, complex *out){
+void sparse_cov_times_vec(struct sparse_cov *cov, complex *vec, complex *out) {
+    /*
+     *  void sparse_cov_times_vec(
+     *      struct sparse_cov *cov, complex *vec, complex *out
+     *  )
+     *
+     *  Multiply a vector by the sparse covariance from the left.
+     *
+     *  Parameters
+     *  ----------
+     *  cov
+     *      Structure containing the sparse covariance information.
+     *  vec
+     *      Vector to multiply by the sparse covariance.
+     *  out
+     *      Where to write the output.
+     */
     // Iniitialize the output.
     memset(out, 0, sizeof(complex) * cov->n_bl);
 
@@ -326,11 +641,56 @@ void sparse_cov_times_vec_wrapper(
     int n_eig,
     int n_src,
     int n_grp,
-    int *edges,
+    long *edges,
     int isinv,
     complex *vec,
     complex *out
 ) {
+    /*
+     *  void sparse_cov_times_vec_wrapper(
+     *      complex *noise,
+     *      complex *diff_mat,
+     *      complex *src_mat,
+     *      int n_bl,
+     *      int n_eig,
+     *      int n_src,
+     *      int n_grp,
+     *      long *edges,
+     *      int isinv,
+     *      complex *vec,
+     *      complex *out
+     *  )
+     *
+     *  Thin wrapper for performing sparse matrix-vector multiplication.
+     *
+     *  Parameters
+     *  ----------
+     *  noise
+     *      Diagonal of the noise variance matrix sorted by redundant groups.
+     *  diff_mat
+     *      Diffuse matrix sorted by redundant groups. Should have shape
+     *      (n_bl, n_eig).
+     *  src_mat
+     *      Source matrix sorted by redundant groups. Should have shape
+     *      (n_bl, n_src).
+     *  n_bl
+     *      Number of baselines.
+     *  n_eig
+     *      Number of eigenmodes used for each redundant group.
+     *  n_src
+     *      Number of sources used in the sky model.
+     *  n_grp
+     *      Number of redundant groups.
+     *  edges
+     *      Array specifying the edges of each redundant group. For example,
+     *      edges[i] gives the start of group i.
+     *  isinv
+     *      Whether the covariance has been inverted or not.
+     *  vec
+     *      Vector to multiply by the sparse covariance.
+     *  out
+     *      Where to write the output.
+     */
     struct sparse_cov *cov = init_cov(
         noise, diff_mat, src_mat, n_bl, n_eig, n_src, n_grp, edges, isinv
     );
