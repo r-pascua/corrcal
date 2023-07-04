@@ -1,7 +1,7 @@
 import numpy as np
 import warnings
 
-from . import cfuncs
+from . import _cfuncs
 from . import linalg
 from . import sparse
 from . import utils
@@ -236,21 +236,20 @@ def dense_grad_nll(
     return linalg.SplitVec(grad_nll).data
 
 
-def nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1):
+def nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.inf):
     """Calculate the negative log-likelihood.
 
-    Fill this in later.
+    TODO: Improve the docs at some point.
 
     Parameters
     ----------
     gains
-        Double-length array of real numbers. The first half of the array gives
-        the real part of the gains; the second half gives the imaginary part.
-        This array is assumed to be sorted so that it can be sensibly sliced
-        into with ``ant_1_inds`` and ``ant_2_inds``.
+        Per-antenna gains, alternating real/imaginary so that the even indices
+        correspond to the real part and the odd indices correspond to the
+        imaginary part.
     cov
-        :class:`~.sparse.SparseCov` object containing the sparse representation
-        of the covaraince matrix.
+        Covariance matrix with inversion methods and methods for building
+        gain matrices.
     data
         Complex-valued array containing the data sorted into quasi-redundant
         groups.
@@ -261,21 +260,22 @@ def nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1):
     scale
         Amount that the gains were scaled prior to starting the conjugate
         gradient routine.
+    phs_norm_fac
+        Scale of the Gaussian prior placed on the average gain phase. Default
+        is to not apply a prior to the gain phases.
 
     Returns
     -------
     nll
         The negative log-likelihood (up to a constant offset).
     """
-    n_ants = gains.size // 2
-    complex_gains = gains[:n_ants] + 1j * gains[n_ants:]
-    complex_gains /= scale
-    cov.gains = complex_gains[ant_1_inds] * complex_gains[ant_2_inds].conj()
-    cinv, logdet = cov.inv(return_det=True)
+    cov.gains = gains / scale
+    cinv, logdet = cov.inv(dense=False, return_det=True)
     chisq = data.conj() @ cinv @ data
-    if np.abs(chisq.imag / chisq.real) > 1e-8:
-        warnings.warn("Chi-squared isn't purely real!")
-    return np.real(chisq + logdet)
+    # Use a Gaussian prior that the average phase should be nearly zero
+    phases = np.arctan2(cov.gains[1::2], cov.gains[::2])
+    phs_norm = np.sum(phases)**2 / phs_norm_fac**2
+    return np.real(chisq) + logdet + phs_norm
 
 
 def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1):

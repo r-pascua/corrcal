@@ -19,7 +19,7 @@ if not lib_dir.exists():
     lib_dir = Path(__file__).parent
 
 lib_path = list(lib_dir.glob("c_corrcal*.so"))[0]
-lib = ctypes.cdll.LoadLibrary(lib_path)
+lib = ct.cdll.LoadLibrary(lib_path)
 
 # Lower-triangular matrix inversion
 tril_inv = lib.tril_inv

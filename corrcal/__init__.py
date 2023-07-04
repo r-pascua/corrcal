@@ -2,7 +2,7 @@ from pathlib import Path
 import logging
 
 from . import calibrate
-from . import cfuncs
+from . import _cfuncs
 from . import gridding
 from . import io
 from . import linalg

@@ -69,20 +69,43 @@ def scale_cov_by_gains(cov, gain_mat):
     return linalg.diagmul(gain_mat, linalg.diagmul(cov, gain_mat.conj()))
 
 
-def build_complex_gains(gains):
-    """Turn split real/imag gain array into complex gains."""
-    n_ants = gains.size // 2
-    return gains[:n_ants] + 1j * gains[n_ants:]
+def build_complex_gains(gains : np.ndarray) -> np.ndarray:
+    """Turn split real/imag gain array into complex gains.
+
+    Parameters
+    ----------
+    gains
+        Array of per-antenna gains, arranged so that even elements are the
+        real part of the gain and odd elements are the imaginary part.
+
+    Returns
+    -------
+    complex_gains
+        Complex per-antenna gains.
+    """
+    return gains[::2] + 1j*gains[1::2]
 
 
 def rephase_to_ant(gains, ant=0):
     """Rephase gains to a reference antenna."""
-    n_ants = gains.size // 2
-    complex_gains = build_complex_gains(gains)
+    if np.iscomplex(gains):
+        complex_gains = gains.copy()
+    else:
+        complex_gains = build_complex_gains(gains)
     ref_gain = complex_gains[ant]
     conj_phase = ref_gain.conj() / np.abs(ref_gain)
     rephased_complex_gains = complex_gains * conj_phase
-    rephased_gains = np.zeros_like(gains)
-    rephased_gains[:n_ants] = rephased_complex_gains.real
-    rephased_gains[n_ants:] = rephased_complex_gains.imag
-    return rephased_gains
+    if np.iscomplex(gains):
+        # If input is complex, output should be as well
+        return rephased_complex_gains
+    else:
+        rephased_gains = np.zeros(2*complex_gains.size)
+        rephased_gains[::2] = rephased_complex_gains.real
+        rephased_gains[1::2] = rephased_complex_gains.imag
+        return rephased_gains
+
+
+def comply_shape(mat):
+    """Check that the provided array has the right shape."""
+    if mat.shape[-1] != mat.shape[-2]:
+        raise ValueError("Array is not square!")
