@@ -1,11 +1,14 @@
 from setuptools import setup, Extension
 
 ext = Extension(
-    "corrcal.c_corrcal",
+    "corrcal.src.c_corrcal",
+    language="C",
     sources=["corrcal/src/c_funcs.c"],
     include_dirs=["corrcal/src"],
-    extra_compile_args=["-fopenmp", "-O3", "-lgomp", "-fPIC", "-lm"],
-    extra_link_args=["-shared"],
+    extra_compile_args=[
+        "-fopenmp", "-O3", "-fPIC"
+    ],
+    extra_link_args=["-shared", "-lgomp", "-lm"],
 )
 
 setup(

@@ -9,14 +9,14 @@ import ctypes as ct
 import site
 from pathlib import Path
 
-lib_dir = Path(site.getsitepackages()[0]) / "corrcal"
+lib_dir = Path(site.getsitepackages()[0]) / "corrcal/src"
 if not lib_dir.exists():
     # This is in case a development installation is used.
     # Development installs do not create a directory in the site
     # packages, but rather put this directory in the python path.
     # So the shared object library is written to the same directory
     # as this file.
-    lib_dir = Path(__file__).parent
+    lib_dir = Path(__file__).parent / "src"
 
 lib_path = list(lib_dir.glob("c_corrcal*.so"))[0]
 lib = ct.cdll.LoadLibrary(lib_path)
