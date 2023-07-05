@@ -141,6 +141,17 @@ mult_src_by_blocks.argtypes = [
     ct.c_int,  # Number of redundant groups
 ]
 
+# Calculate \Delta' @ (\Delta'.H @ \Sigma)
+mult_src_blocks_by_diffuse = lib.mult_src_blocks_by_diffuse
+mult_src_blocks_by_diffuse.argtypes = [
+    ct.c_void_p,  # "Inverse" of diffuse matrix
+    ct.c_void_p,  # Product of inverse Hconj diffuse matrix and source matrix
+    ct.c_void_p,  # Where to write output
+    ct.c_void_p,  # Redundant group edges
+    ct.c_int,  # Number of sources
+    ct.c_int,  # Number of eigenmodes
+    ct.c_int,  # Number of redundant groups
+]
 # Make a sparse covariance structure
 init_cov = lib.init_cov
 init_cov.argtypes = [

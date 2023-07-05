@@ -67,7 +67,7 @@ def cholesky(mat: np.ndarray, inplace: bool = False):
         if inplace:
             _cfuncs.cholesky_inplace(mat.ctypes.data, mat.shape[0])
         else:
-            _cfuncs.cholesky(mat.ctypes.data, out.ctypes.data, mat.shape[0])
+            _cfuncs.cholesky(mat.ctypes.data, chol.ctypes.data, mat.shape[0])
     else:
         if inplace:
             _cfuncs.many_chol_inplace(
@@ -75,10 +75,10 @@ def cholesky(mat: np.ndarray, inplace: bool = False):
             )
         else:
             _cfuncs.many_chol(
-                mat.ctypes.data, out.ctypes.data, mat.shape[-1], mat.shape[0]
+                mat.ctypes.data, chol.ctypes.data, mat.shape[-1], mat.shape[0]
             )
     if not inplace:
-        return out
+        return chol
 
 
 def block_multiply(
@@ -162,6 +162,46 @@ def mult_src_by_blocks(
         out.ctypes.data,
         edges.ctypes.data,
         n_bl,
+        n_src,
+        n_eig,
+        n_grp,
+    )
+    return out
+
+
+def mult_src_blocks_by_diffuse(inv_diff_mat, src_blocks, edges):
+    """Compute the inverse diffuse covariance times the source matrix.
+
+    This function computes the product :math:`\Delta'\Delta'^\dag\Sigma` when
+    provided with :math:`\Delta'` and :math:`\Delta'^\dag\Sigma` (as well as
+    the redundant group edges) as inputs. It is required in two different
+    parts of the second application of the Woodbury identity.
+
+    Parameters
+    ----------
+    inv_diff_mat
+        The "inverse" of the diffuse matrix.
+    src_blocks
+        The product of the Hermitian conjugate of the "inverse" diffuse matrix
+        and the source matrix.
+    edges
+        Array specifying the edges of each redundant group. The array should
+        consist of 64-bit integers.
+        
+    Returns
+    -------
+    out
+        Product of the inverse diffuse covariance and the source matrix.
+    """
+    n_src = src_blocks.shape[-1]
+    n_grp = edges.size - 1
+    n_bls, n_eig = inv_diff_mat.shape
+    out = np.zeros((n_bls, n_src), dtype=complex)
+    _cfuncs.mult_src_blocks_by_diffuse(
+        inv_diff_mat.ctypes.data,
+        src_blocks.ctypes.data,
+        out.ctypes.data,
+        edges.ctypes.data,
         n_src,
         n_eig,
         n_grp,

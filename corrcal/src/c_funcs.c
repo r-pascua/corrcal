@@ -143,7 +143,7 @@ void mymatmul(
      *  stridea
      *      Number of columns in left.
      *  strideb
-     *      Number of rows in right.
+     *      Number of columns in right.
      *  stridec
      *      Number of columns in out.
      *  m
@@ -244,7 +244,7 @@ void mult_src_by_blocks(
      *  ----------
      *  blocks_H
      *      Hermitian conjugate of the block-diagonal entries in the "inverse"
-     *      diffuse matrix. Should have shape (n_bl, n_eig).
+     *      diffuse matrix. Should have shape (n_eig, n_bl).
      *  src_mat
      *      Source matrix with shape (n_bl, n_src).
      *  out
@@ -283,6 +283,50 @@ void mult_src_by_blocks(
                 n_eig,
                 1,
                 edges[grp+1]-edges[grp]
+            );
+        }
+    }
+}
+
+
+void mult_src_blocks_by_diffuse(
+    complex *inv_diff_mat, complex *src_blocks, complex *out, long *edges,
+    int n_src, int n_eig, int n_grp
+) {
+    /*
+     *  Compute the inverse diffuse covariance times the source matrix.
+     *
+     *  Parameters
+     *  ----------
+     *  inv_diff_mat
+     *      "Inverse" of the diffuse matrix, with shape (n_bl, n_eig).
+     *  src_blocks
+     *      Product of the Hermitian conjugate of the "inverse" diffuse
+     *      matrix and the source matrix, with shape (n_eig, n_src).
+     *  out
+     *      Where to write the output of the matrix product.
+     *  edges
+     *      Array specifying the edges of each redundant group. For example,
+     *      edges[i] gives the start of group i.
+     *  n_src
+     *      Number of sources used in the sky model.
+     *  n_eig
+     *      Number of eigenmodes used for each redundant group.
+     *  n_grp
+     *      Number of redundant groups.
+     */
+    for (int grp=0; grp<n_grp; grp++) {
+        for (int src=0; src<n_src; src++) {
+            mymatmul(
+                inv_diff_mat+edges[grp]*n_eig,
+                src_blocks+src+grp*n_eig*n_src,
+                out+edges[grp]*n_src+src,
+                n_eig,
+                n_src,
+                n_src,
+                edges[grp+1]-edges[grp],
+                1,
+                n_eig
             );
         }
     }

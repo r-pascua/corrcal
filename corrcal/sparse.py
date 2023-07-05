@@ -47,9 +47,9 @@ class SparseCov:
         """
         Decide how to split docs between class and constructor.
         """
-        self.noise = noise.astype(complex)
-        self.src_mat = src_mat.astype(complex)
-        self.diff_mat = diff_mat.astype(complex)
+        self.noise = np.ascontiguousarray(noise, dtype=complex)
+        self.src_mat = np.ascontiguousarray(src_mat, dtype=complex)
+        self.diff_mat = np.ascontiguousarray(diff_mat, dtype=complex)
         self.edges = np.array(edges, dtype=int)
         self.n_grp = edges.size - 1
         self.n_bls = src_mat.shape[0]
@@ -171,14 +171,16 @@ class SparseCov:
             Cinv.diff_mat.T.conj(), self.src_mat, self.edges
         )
 
-        tmp = Cinv.diff_mat @ tmp
+        tmp = linalg.mult_src_blocks_by_diffuse(
+            Cinv.diff_mat, tmp, self.edges
+        )
         if Cinv.isinv:
-            tmp = Cinv.noise[:,None] * self.src_mat - tmp
+            tmp = Cinv.noise[:,None]*self.src_mat - tmp
             small_inv = np.eye(self.n_src).astype(complex) + (
                 self.src_mat.T.conj() @ tmp
             )
         else:
-            tmp = Cinv.noise[:,None] * self.src_mat + tmp
+            tmp = Cinv.noise[:,None]*self.src_mat + tmp
             small_inv = np.eye(self.n_src).astype(complex) - (
                 self.src_mat.T.conj() @ tmp
             )
@@ -188,7 +190,7 @@ class SparseCov:
             logdet += np.log(np.diag(small_inv)).sum()
 
         small_inv = np.linalg.inv(small_inv)
-        Cinv.src_mat = tmp @ self.src_mat @ small_inv.T.conj()
+        Cinv.src_mat = tmp @ small_inv.T.conj()
         if return_det:
             return Cinv, logdet
         return Cinv
