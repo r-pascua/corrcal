@@ -81,49 +81,47 @@ def cholesky(mat: np.ndarray, inplace: bool = False):
         return out
 
 
-def make_small_blocks(
-    noise_diag: np.ndarray, diff_mat: np.ndarray, edges: np.ndarray
+def block_multiply(
+    diff_mat: np.ndarray, blocks: np.ndarray, edges: np.ndarray
 ):
-    """Make small blocks for use in inverting the diffuse matrix.
+    """Helper function for diffuse matrix inversion routine.
 
-    This routine calculates :math:`\Delta^\dag N^{-1} \Delta` for a diffuse
-    matrix that is block-diagonal. It is a thin wrapper around the C-code
+    This routine calculates :math:`N^{-1} \Delta {L_\Delta}^{-1\dagger}` as
+    part of the diffuse matrix "inversion" routine in the case where the
+    diffuse matrix is block-diagonal. It is a thin wrapper around the C-code
     that performs the actual computation.
 
     Parameters
     ----------
-    noise_diag
-        Diagonal of the noise variance matrix. The array should consist of
-        double precision complex numbers.
     diff_mat
-        Diffuse matrix sorted into redundant groups. The rows correspond to
-        different baselines (and this is the axis it is sorted along), while
-        the columns correspond to different eigenmodes. The array should
-        consist of double precision complex numbers.
+        Diffuse matrix, sorted by redundant groups. Should be an array of
+        double precision complex numbers.
+    blocks
+        Array of many small square matrices. Should represent the block-
+        diagonal entries in the Cholesky decomposition of the small matrix
+        :math:`1 \pm \Delta^\dagger N^{-1} \Delta` that is computed during
+        the first application of the Woodbury identity.
     edges
         Array specifying the edges of each redundant group. The array should
         consist of 64-bit integers.
-
+        
     Returns
     -------
-    small_blocks
-        Array containing the small blocks resulting from the matrix product.
-        The array is 3-dimensional; indexing along the zeroth-axis accesses
-        blocks for different redundant groups.
+    out
+        Product of the diffuse matrix and small blocks--this is the "inverse"
+        of the diffuse matrix.
     """
-    n_eig = diff_mat.shape[-1]
-    n_grp = edges.size - 1
-    out = np.zeros((n_grp, n_eig, n_eig), dtype=complex)
-    _cfuncs.make_all_small_blocks(
-        noise_diag.ctypes.data,
+    out = np.zeros_like(diff_mat)
+    _cfuncs.block_multiply(
+        blocks.ctypes.data,
         diff_mat.ctypes.data,
         out.ctypes.data,
         edges.ctypes.data,
-        n_eig,
-        n_grp,
+        diff_mat.shape[-1],
+        edges.size - 1,
     )
     return out
-
+    
 
 def mult_src_by_blocks(
     blocks_H: np.ndarray, src_mat: np.ndarray, edges: np.ndarray
@@ -138,9 +136,8 @@ def mult_src_by_blocks(
     Parameters
     ----------
     blocks_H
-        Hermitian conjugate of the "inverse" diffuse matrix. This should be a
-        3-dimensional array of double precision complex numbers, with the
-        zeroth axis indexing over redundant groups.
+        Hermitian conjugate of the "inverse" diffuse matrix. This should be
+        an array of douple precision complex numbers.
     src_mat
         Source matrix, sorted by redundant groups. This should be an array of
         double precision complex numbers.
@@ -154,11 +151,11 @@ def mult_src_by_blocks(
         Product of the Hermitian conjugate of the "inverse" diffuse matrix and
         the source matrix.
     """
-    n_eig = blocks_H.shape[-1]
+    n_eig = blocks_H.shape[0]
     n_grp = edges.size - 1
     n_bl = edges[-1]
     n_src = src_mat.shape[-1]
-    out = np.zeros_like(src_mat)
+    out = np.zeros((n_eig*n_grp, n_src), dtype=complex)
     _cfuncs.mult_src_by_blocks(
         blocks_H.ctypes.data,
         src_mat.ctypes.data,
@@ -168,5 +165,37 @@ def mult_src_by_blocks(
         n_src,
         n_eig,
         n_grp,
+    )
+    return out
+
+
+def sparse_cov_times_vec(sparse_cov, vec):
+    """Multiply a vector by a sparse covariance matrix.
+    
+    Parameters
+    ----------
+    sparse_cov
+        Object containing all of the sparse covariance information.
+    vec
+        Vector to multiply by the covariance.
+
+    Returns
+    -------
+    out
+        Product of the covariance matrix and the provided vector.
+    """
+    out = np.zeros_like(vec)
+    _cfuncs.sparse_cov_times_vec(
+        sparse_cov.noise.ctypes.data,
+        sparse_cov.diff_mat.ctypes.data,
+        sparse_cov.src_mat.ctypes.data,
+        sparse_cov.n_bl,
+        sparse_cov.n_eig,
+        sparse_cov.n_src,
+        sparse_cov.n_grp,
+        sparse_cov.edges.ctypes.data,
+        sparse_cov.isinv,
+        vec.ctypes.data,
+        out.ctypes.data,
     )
     return out

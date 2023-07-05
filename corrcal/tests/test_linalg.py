@@ -2,52 +2,59 @@ import pytest
 import numpy as np
 from corrcal import linalg
 
+def mock_data(shape):
+    return np.random.normal(size=shape) + 1j*np.random.normal(size=shape)
+    
 
 @pytest.fixture
-def test_vec():
-    return np.random.normal(size=50) + 1j * np.random.normal(size=50)
+def edges():
+    return np.array([0,3,5,9,15]).astype(int)
 
 
 @pytest.fixture
-def test_mat():
-    return np.random.normal(size=(50, 50)) + 1j * np.random.normal(
-        size=(50, 50)
-    )
+def n_bl():
+    return 50
 
 
-def test_split_vec_inner_product(test_vec):
-    n = test_vec.size
-    other_vec = np.random.normal(size=n) + 1j * np.random.normal(size=n)
-    ans = test_vec @ other_vec
-    test_vec = linalg.SplitVec(test_vec)
-    other_vec = linalg.SplitVec(other_vec)
-    assert np.isclose(ans, test_vec @ other_vec)
+@pytest.fixture
+def n_eig():
+    return 3
 
 
-def test_split_matmul(test_mat):
-    nn = test_mat.shape
-    other_mat = np.random.normal(size=nn) + 1j * np.random.normal(size=nn)
-    ans = test_mat @ other_mat
-    test_mat = linalg.SplitMat(test_mat)
-    other_mat = linalg.SplitMat(other_mat)
-    split_ans = test_mat @ other_mat
-    assert np.allclose(ans, split_ans.real + 1j * split_ans.imag)
+@pytest.fixture
+def n_src():
+    return 10
 
 
-@pytest.mark.parametrize("side", ["left", "right"])
-def test_split_vecmul(test_vec, test_mat, side):
-    if side == "left":
+@pytest.fixture
+def diff_mat(n_bl, n_eig):
+    return mock_data((n_bl, n_eig))
 
-        def matmul(mat, vec):
-            return mat @ vec
 
-    else:
+@pytest.fixture
+def src_mat(n_bl, n_src):
+    return mock_data((n_bl, n_src))
 
-        def matmul(mat, vec):
-            return vec @ mat
 
-    ans = matmul(test_mat, test_vec)
-    test_vec = linalg.SplitVec(test_vec)
-    test_mat = linalg.SplitMat(test_mat)
-    split_ans = matmul(test_mat, test_vec)
-    assert np.allclose(ans, split_ans.real + 1j * split_ans.imag)
+@pytest.fixture
+def noise(n_bl):
+    return np.abs(mock_data(n_bl)).astype(complex)
+
+
+def test_make_small_blocks(edges, n_bl, n_eig, noise, diff_mat):
+    n_grp = edges.size - 1
+    dense_diff_mat = np.zeros((n_bl, n_eig*n_grp), dtype=complex)
+    for grp in range(n_grp):
+        bl_slice = slice(edges[grp], edges[grp+1])
+        eig_slice = slice(grp*n_eig, (grp+1)*n_eig)
+        dense_diff_mat[bl_slice,eig_slice] = diff_mat[bl_slice]
+
+    N_inv = np.diag(1/noise)
+    answer = dense_diff_mat.T.conj() @ N_inv @ dense_diff_mat
+    sparse_product = linalg.make_small_blocks(noise, diff_mat, edges)
+    dense_product = np.zeros((n_eig*n_grp, n_eig*n_grp), dtype=complex)
+    for grp in range(n_grp):
+        sl = slice(grp*n_eig, (grp+1)*n_eig)
+        dense_product[sl,sl] = sparse_product[grp]
+    
+    assert np.allclose(dense_product, answer)

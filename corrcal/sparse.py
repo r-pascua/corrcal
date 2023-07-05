@@ -39,32 +39,36 @@ class SparseCov:
         The number of eigenmodes used to represent each quasi-redundant group.
     n_bls
         The total number of baselines in the array.
+    isinv
+        Whether the matrix is the inverse of the covariance or not.
     """
 
-    def __init__(self, noise, src_mat, diff_mat, edges, n_eig):
+    def __init__(self, noise, src_mat, diff_mat, edges, n_eig, isinv=False):
         """
         Decide how to split docs between class and constructor.
         """
-        self.noise = noise
-        self.src_mat = src_mat
-        self.diff_mat = diff_mat
-        self.edges = np.array(edges, dtype="int32")
+        self.noise = noise.astype(complex)
+        self.src_mat = src_mat.astype(complex)
+        self.diff_mat = diff_mat.astype(complex)
+        self.edges = np.array(edges, dtype=int)
         self.n_grp = edges.size - 1
         self.n_bls = src_mat.shape[0]
         self.n_src = src_mat.shape[1]
         self.n_eig = n_eig
         self.diff_is_diag = diff_mat.shape == (self.n_bls, n_eig)
-        self.isinv = False
+        self.isinv = isinv
         if not self.diff_is_diag:
             if diff_mat.shape != (self.n_bls, self.n_grp*n_eig):
                 raise ValueError(
                     "Diffuse matrix shape is not understood. See class "
                     "docstring for information on expected shape."
                 )
-        
+
+
     def __matmul__(self, other):
         """Multiply by a vector on the right."""
-        raise NotImplementedError("Coming soon.")
+        return linalg.sparse_cov_times_vec(self, other)
+
 
     def copy(self):
         """Return a copy of the class instance."""
@@ -74,8 +78,10 @@ class SparseCov:
             diff_mat=self.diff_mat,
             edges=self.edges,
             n_eig=self.n_eig,
+            isinv=self.isinv,
         )
-            
+
+
     def expand(self):
         """Return the dense covariance."""
         if self.diff_is_diag:
@@ -95,6 +101,7 @@ class SparseCov:
         if self.isinv:
             return np.diag(self.noise) - cov
         return np.diag(self.noise) + cov
+
 
     def inv(self, return_det=False):
         """Invert the covariance with the Woodbury identity.
@@ -133,42 +140,59 @@ class SparseCov:
         # Initialize a new SparseCov
         Cinv = self.copy()
         Cinv.isinv = not self.isinv
+        Cinv.noise = 1 / self.noise
         
         # Calculate 1 + D^\dag G^\dag Ninv DG.
-        small_blocks = np.zeros(
-            (self.n_grp, self.n_eig, self.n_eig), dtype=complex
-        )
-        utils.make_small_blocks(
+        small_blocks = utils.make_small_blocks(
             noise_diag=self.noise,
-            diffuse_mat=diff_mat,
-            out=small_blocks,
+            diff_mat=self.diff_mat,
             edges=self.edges,
-            n_eig=self.n_eig,
-            n_block=self.n_grp,
         )
-        if self.isinv:
-            small_blocks = np.eye(self.n_eig)[None,...] - small_blocks
+        if Cinv.isinv:
+            small_blocks = np.eye(self.n_eig)[None,...] + small_blocks
         else:
-            small_blocks += np.eye(self.n_eig)[None,...]
+            small_blocks = np.eye(self.n_eig)[None,...] - small_blocks
+
         small_blocks = np.linalg.cholesky(small_blocks)
         if return_det:
-            logdet += np.sum(
-                [np.log(np.diag(block)) for block in small_blocks]
+            logdet += sum(
+                np.log(np.diag(block)).sum() for block in small_blocks
             )
 
         # This is faster than using np.linalg.inv
-        small_inv = linalg.many_tri_inv(small_blocks)
+        small_inv = linalg.tril_inv(small_blocks).transpose(0,2,1).conj()
         
         # Calculate Ninv D L_D^{-1\dag}
-        tmp = self.noise[:,None] * diff_mat
-        new_diff_mat = linalg.block_multiply(
-            small_blocks=small_inv,
-            mat=tmp.T.conj(),
-            edges=self.edges,
-        ).T.conj()
-        Cinv.diff_mat = new_diff_mat
+        tmp = Cinv.noise[:,None] * self.diff_mat
+        Cinv.diff_mat = linalg.block_multiply(tmp, small_inv, self.edges)
 
-        # TODO: finish this
+        # Now invert the source matrix.
+        tmp = linalg.mult_src_by_blocks(
+            Cinv.diff_mat.T.conj(), self.src_mat, self.edges
+        )
+
+        tmp = Cinv.diff_mat @ tmp
+        if Cinv.isinv:
+            tmp = Cinv.noise[:,None] * self.src_mat - tmp
+            small_inv = np.eye(self.n_src).astype(complex) + (
+                self.src_mat.T.conj() @ tmp
+            )
+        else:
+            tmp = Cinv.noise[:,None] * self.src_mat + tmp
+            small_inv = np.eye(self.n_src).astype(complex) - (
+                self.src_mat.T.conj() @ tmp
+            )
+
+        small_inv = np.linalg.cholesky(small_inv)
+        if return_det:
+            logdet += np.log(np.diag(small_inv)).sum()
+
+        small_inv = np.linalg.inv(small_inv)
+        Cinv.src_mat = tmp @ self.src_mat @ small_inv.T.conj()
+        if return_det:
+            return Cinv, logdet
+        return Cinv
+        
 
     def _full_inv(self, return_det=False):
         """Inversion routine for non-block-diagonal diffuse matrix."""
