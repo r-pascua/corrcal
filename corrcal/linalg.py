@@ -229,7 +229,7 @@ def sparse_cov_times_vec(sparse_cov, vec):
         sparse_cov.noise.ctypes.data,
         sparse_cov.diff_mat.ctypes.data,
         sparse_cov.src_mat.ctypes.data,
-        sparse_cov.n_bl,
+        sparse_cov.n_bls,
         sparse_cov.n_eig,
         sparse_cov.n_src,
         sparse_cov.n_grp,
