@@ -6,7 +6,7 @@ from pyuvdata import UVData, UVCal
 from scipy.optimize import fmin_cg, minimize
 
 from . import io, optimize, utils
-from .sparse import Sparse2Level
+from .sparse import SparseCov
 
 
 class CorrCal:

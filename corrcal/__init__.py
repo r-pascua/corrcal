@@ -14,7 +14,7 @@ from . import sparse
 from . import utils
 
 from .calibrate import CorrCal
-from .sparse import Sparse2Level
+from .sparse import SparseCov
 
 LOGGER = logging.Logger(name="corrcal_logger", level=logging.WARN)
 NOISE_MODELS = {}
