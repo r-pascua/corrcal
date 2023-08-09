@@ -280,7 +280,7 @@ def nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.inf):
     return np.real(chisq) + logdet + phs_norm
 
 
-def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=1):
+def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.inf):
     """Calculate the gradient of the negative log-likelihood.
 
     This is the gradient with respect to the real/imaginary per-antenna gains.
