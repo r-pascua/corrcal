@@ -280,7 +280,7 @@ def nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.inf):
     return np.real(chisq) + logdet + phs_norm
 
 
-def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1):
+def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=1):
     """Calculate the gradient of the negative log-likelihood.
 
     This is the gradient with respect to the real/imaginary per-antenna gains.
@@ -291,51 +291,55 @@ def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1):
     same as nll. fill this out later.
     """
     # Prepare the gain matrix.
-    n_ants = gains.size // 2
+    gains = gains / scale
     complex_gains = gains[::2] + 1j*gains[1::2]
-    complex_gains /= scale
+    gain_mat = complex_gains[ant_1_inds] * complex_gains[ant_2_inds].conj()
 
     # Prepare some auxiliary matrices/vectors.
-    cinv = cov.inv()
-    wgted_data = cinv @ data
-    src_rhs = cov.src_mat.T.conj() * cov.gains[None, :].conj()
-    diff_rhs = cov.diff_mat.T.conj() * cov.gains[None, :].conj()
+    cov = cov.copy()
+    noise = cov.noise.copy()
+    cov.noise = np.zeros_like(noise)
+    model_cov = cov.expand()
+    cov.noise = noise
+    cov.apply_gains(gains/scale, ant_1_inds, ant_2_inds)
+    cinv = cov.inv(return_det=False)
+    cinv_data = cinv @ data
+    model_cinv = cinv.expand()
 
     # Initialize important arrays for the gradient calculation.
-    gradient = np.zeros(2 * n_ants, dtype=float)
-    gain_mat_grad = np.zeros_like(cov.gains)
-    cov_grad = np.zeros_like(cinv)
+    gradient = np.zeros_like(gains)
+    tan_phs = gains[1::2] / gains[::2]
+    phases = np.arctan2(gains[1::2], gains[::2])
+    grad_phs_prefac = 2 * phases.sum() / (
+        phs_norm_fac**2 * gains[::2] * (1 + tan_phs**2)
+    )
 
     # Calculate the gradient antenna by antenna.
     # TODO: see if this is the fastest way to calculate the gradient.
-    for ant in range(n_ants):
-        for i, sl in enumerate((slice(None, n_ants), slice(n_ants, None))):
-            delta_ant1 = ant_1_inds == ant
-            delta_ant2 = ant_2_inds == ant
-            gain_mat_grad[:] = 0
-            if i == 0:  # Gradient w.r.t. real part of gains
-                gain_mat_grad[delta_ant1] += gains[ant_2_inds][
-                    delta_ant1
-                ].conj()
-                gain_mat_grad[delta_ant2] += gains[ant_1_inds][delta_ant2]
-            else:
-                gain_mat_grad[delta_ant1] += (
-                    1j * gains[ant_2_inds][delta_ant1].conj()
-                )
-                gain_mat_grad[delta_ant2] -= 1j * gains[ant_1_inds][delta_ant2]
+    for k in range(gains.size):
+        grad_chisq = 0
+        grad_gains = np.zeros_like(gain_mat)
+        if k % 2 == 0:  # Derivative w.r.t. real part of gain
+            grad_gains += np.where(
+                ant_1_inds == k//2, complex_gains[ant_2_inds].conj(), 0
+            )
+            grad_gains += np.where(
+                ant_2_inds == k//2, complex_gains[ant_1_inds], 0
+            )
+            grad_phs_norm = -grad_phs_prefac[k//2] * gains[k+1] / gains[k]
+        else:  # Derivative w.r.t. imaginary part of gain
+            grad_gains += np.where(
+                ant_1_inds == k//2, 1j*complex_gains[ant_2_inds].conj(), 0
+            )
+            grad_gains += np.where(
+                ant_2_inds == k//2, -1j*complex_gains[ant_1_inds], 0
+            )
+            grad_phs_norm = grad_phs_prefac[k//2]
 
-            # Calculate Eq. ?? from Pascua+ 22.
-            cov_grad[...] = 0
-            cov_grad += (gain_mat_grad[:, None] * cov.src_mat) @ src_rhs
-            cov_grad += (gain_mat_grad[:, None] * cov.diff_mat) @ diff_rhs
-            cov_grad += cov_grad.T.conj()
-
-            # Calculate the gradient of the normalization, but do it fast.
-            grad_norm = np.sum(cinv * cov_grad.T)
-            grad_chisq = -wgted_data.conj() @ cov_grad @ wgted_data
-            grad = grad_norm + grad_chisq
-
-            if np.abs(grad.imag / grad.real) > 1e-8:
-                warnings.warn("Gradient isn't purely real!")
-            gradient[sl][ant] = grad.real
+        # Just do the stupid thing for now, then figure out how to go fast
+        grad_cov = grad_gains[:,None] * model_cov * gain_mat[None,:].conj()
+        grad_cov = grad_cov + grad_cov.T.conj()
+        grad_chisq = cinv_data.T.conj() @ grad_cov @ cinv_data
+        grad_logdet = np.sum(model_cinv * grad_cov.T)
+        gradient[k] = np.real(grad_logdet - 2*grad_chisq + grad_phs_norm)
     return gradient / scale
