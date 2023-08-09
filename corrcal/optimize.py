@@ -269,11 +269,13 @@ def nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.inf):
     nll
         The negative log-likelihood (up to a constant offset).
     """
-    cov.gains = gains / scale
-    cinv, logdet = cov.inv(dense=False, return_det=True)
-    chisq = data.conj() @ cinv @ data
+    cov = cov.copy()
+    cov.apply_gains(gains / scale, ant_1_inds, ant_2_inds)
+    cinv, logdet = cov.inv(return_det=True)
+    chisq = data.conj() @ (cinv @ data)
+
     # Use a Gaussian prior that the average phase should be nearly zero
-    phases = np.arctan2(cov.gains[1::2], cov.gains[::2])
+    phases = np.arctan2(gains[1::2], gains[::2])
     phs_norm = np.sum(phases)**2 / phs_norm_fac**2
     return np.real(chisq) + logdet + phs_norm
 
@@ -290,9 +292,8 @@ def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1):
     """
     # Prepare the gain matrix.
     n_ants = gains.size // 2
-    complex_gains = gains[:n_ants] + 1j * gains[n_ants:]
+    complex_gains = gains[::2] + 1j*gains[1::2]
     complex_gains /= scale
-    cov.gains = complex_gains[ant_1_inds] * complex_gains[ant_2_inds].conj()
 
     # Prepare some auxiliary matrices/vectors.
     cinv = cov.inv()
