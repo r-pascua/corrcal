@@ -403,11 +403,11 @@ def compute_trace(cov, inv_cov, gain_mat, grad_gain):
         the covariance.
     """
     # Compute the first two terms.
-    tmp = inv_cov.noise * gain_mat * grad_gain
+    tmp = inv_cov.noise * gain_mat.conj() * grad_gain
     trace = tmp @ np.sum(np.abs(cov.diff_mat)**2, axis=1)
     trace += tmp @ np.sum(np.abs(cov.src_mat)**2, axis=1)
 
-    # Compute the auxilliary terms.
+    # Compute the auxiliary terms.
     dG_Delta = grad_gain[:,None] * cov.diff_mat
     dG_Sigma = grad_gain[:,None] * cov.src_mat
     G_Delta = gain_mat[:,None] * cov.diff_mat
@@ -422,8 +422,8 @@ def compute_trace(cov, inv_cov, gain_mat, grad_gain):
 
     # Compute the fourth term: tr(S'^\dag dG S S^\dag G^\dag S')
     tmp = inv_cov.src_mat.T.conj() @ dG_Sigma
-    tmp2 = G_Sigma.T.conj() @ inv_cov.src_mat
-    trace -= np.sum(tmp * tmp2.T)
+    tmp2 = inv_cov.src_mat.T.conj() @ G_Sigma
+    trace -= np.sum(tmp * tmp2.conj())
 
     # Compute the fifth term: tr(D'^\dag dG S S^\dag G^\dag D')
     tmp = linalg.mult_src_by_blocks(
