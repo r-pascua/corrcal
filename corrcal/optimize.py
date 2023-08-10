@@ -296,15 +296,13 @@ def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.
     gain_mat = complex_gains[ant_1_inds] * complex_gains[ant_2_inds].conj()
 
     # Prepare some auxiliary matrices/vectors.
-    cov = cov.copy()
-    noise = cov.noise.copy()
-    cov.noise = np.zeros_like(noise)
-    model_cov = cov.expand()
-    cov.noise = noise
-    cov.apply_gains(gains/scale, ant_1_inds, ant_2_inds)
-    cinv = cov.inv(return_det=False)
+    cinv = cov.copy()
+    cinv.apply_gains(gains/scale, ant_1_inds, ant_2_inds)
+    cinv = cinv.inv(return_det=False)
     cinv_data = cinv @ data
-    model_cinv = cinv.expand()
+    cov = cov.copy()
+    cov.noise = np.zeros_like(cov.noise)
+    tmp_data = cov @ (gain_mat.conj() * cinv_data)
 
     # Initialize important arrays for the gradient calculation.
     gradient = np.zeros_like(gains)
@@ -336,10 +334,113 @@ def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.
             )
             grad_phs_norm = grad_phs_prefac[k//2]
 
-        # Just do the stupid thing for now, then figure out how to go fast
-        grad_cov = grad_gains[:,None] * model_cov * gain_mat[None,:].conj()
-        grad_cov = grad_cov + grad_cov.T.conj()
-        grad_chisq = cinv_data.T.conj() @ grad_cov @ cinv_data
-        grad_logdet = np.sum(model_cinv * grad_cov.T)
-        gradient[k] = np.real(grad_logdet - 2*grad_chisq + grad_phs_norm)
+        # This should be a bit faster than the dumb thing, but probably isn't
+        # as fast as it can possibly be.
+        grad_chisq = 2 * (cinv_data.conj() * grad_gains) @ tmp_data
+        grad_logdet = compute_trace(cov, cinv, gain_mat, grad_gains)
+        gradient[k] = grad_logdet - grad_chisq.real + grad_phs_norm
+
     return gradient / scale
+
+
+def compute_trace(cov, inv_cov, gain_mat, grad_gain):
+    r"""Helper function for the gradient routine.
+
+    This function computes the trace of :math:`$C^{-1} \partial C$`. After
+    exploiting trace properties, we're left with the following quantities to
+    compute:
+
+    .. math::
+
+        \begin{align}
+            {\rm Tr}(N^{-1} \partial G \Delta \Delta^\dag G^\dag) &= \sum_{i,m}
+            N^{-1}_{ii} \partial G_{ii} G^{*}_{ii} |\Delta_{im}|^2, \\
+            
+            {\rm Tr}(N^{-1} \partial G \Sigma \Sigma^\dag G^\dag) &= \sum_{i,j}
+            N^{-1}_{ii} \partial G_{ii} G^{*}_{ii} |\Sigma_{ij}|^2, \\
+            
+            {\rm Tr}(\Delta' \Delta'^\dag \partial G \Delta \Delta^\dag
+            G^\dag) &= \sum_{m,n} (\Delta'^\dag \partial G \Delta)_{mn}
+            (\Delta^\dag G^\dag \Delta')_{nm}, \\
+
+            {\rm Tr}(\Sigma' \Sigma'^\dag \partial G \Sigma \Sigma^\dag
+            G^\dag) &= \sum_{i,j} (\Sigma'^\dag \partial G \Sigma)_{ij}
+            (\Sigma^\dag G^\dag \Sigma')_{ji}, \\
+
+            {\rm Tr}(\Delta' \Delta'^\dag \partial G \Sigma \Sigma^\dag
+            G^\dag) &= \sum_{m,j} (\Delta'^\dag \partial G \Sigma)_{mj}
+            (\Sigma^\dag G^\dag \Delta')_{jm}, \\
+
+            {\rm Tr}(\Sigma' \Sigma'^\dag \partial G \Delta \Delta^\dag
+            G^\dag) &= \sum_{j,m} (\Sigma'^\dag \partial G \Delta)_{jm}
+            (\Delta^\dag G^\dag \Sigma')_{mj},
+        \end{align}
+
+    where :math:`C^{-1} = N^{-1} - \Delta'\Delta'^\dag - \Sigma'\Sigma'^\dag`
+    (with the gains already applied prior to inversion), :math:`\Delta` is the
+    diffuse matrix, :math:`\Sigma` is the source matrix, :math:`N` is the noise
+    matrix, and :math:`G` is the gain matrix. The terms in the trace are
+    written this way to motivate how they can be computed efficiently: the
+    first two terms are straightforward to compute quickly; the other terms can
+    all be computed with C-routines that are minor modifications of routines
+    used in the inversion routine.
+
+    Parameters
+    ----------
+    cov
+        Sparse covariance object.
+    inv_cov
+        Sparse inverse covariance object.
+    gain_mat
+        Diagonal of the gain matrix.
+    grad_gain
+        Diagonal of the derivative of the gain matrix.
+
+    Returns
+    -------
+    trace
+        Trace of the product of the inverse covariance and the derivative of
+        the covariance.
+    """
+    # Compute the first two terms.
+    tmp = inv_cov.noise * gain_mat * grad_gain
+    trace = tmp @ np.sum(np.abs(cov.diff_mat)**2, axis=1)
+    trace += tmp @ np.sum(np.abs(cov.src_mat)**2, axis=1)
+
+    # Compute the auxilliary terms.
+    dG_Delta = grad_gain[:,None] * cov.diff_mat
+    dG_Sigma = grad_gain[:,None] * cov.src_mat
+    G_Delta = gain_mat[:,None] * cov.diff_mat
+    G_Sigma = gain_mat[:,None] * cov.src_mat
+
+    # Compute the third term: tr(D'^\dag dG D D^\dag G^\dag D')
+    tmp = linalg.mult_diff_mats(
+        inv_cov.diff_mat.T.conj(), dG_Delta, cov.edges
+    )
+    tmp2 = linalg.mult_diff_mats(G_Delta.T.conj(), inv_cov.diff_mat, cov.edges)
+    trace -= np.sum(tmp * tmp2.transpose(0,2,1))
+
+    # Compute the fourth term: tr(S'^\dag dG S S^\dag G^\dag S')
+    tmp = inv_cov.src_mat.T.conj() @ dG_Sigma
+    tmp2 = G_Sigma.T.conj() @ inv_cov.src_mat
+    trace -= np.sum(tmp * tmp2.T)
+
+    # Compute the fifth term: tr(D'^\dag dG S S^\dag G^\dag D')
+    tmp = linalg.mult_src_by_blocks(
+        inv_cov.diff_mat.T.conj(), dG_Sigma, cov.edges
+    )
+    tmp2 = linalg.mult_src_by_blocks(
+        inv_cov.diff_mat.T.conj(), G_Sigma, cov.edges
+    ).conj()
+    trace -= np.sum(tmp * tmp2)
+
+    # Compute the last term: tr(D^\dag G^\dag S' S'^\dag dG D)
+    tmp = linalg.mult_src_by_blocks(
+        G_Delta.T.conj(), inv_cov.src_mat, cov.edges
+    )
+    tmp2 = linalg.mult_src_by_blocks(
+        dG_Delta.T.conj(), inv_cov.src_mat, cov.edges
+    ).conj()
+    trace -= np.sum(tmp * tmp2)
+
+    return 2 * trace.real

@@ -228,6 +228,51 @@ void block_multiply(
 }
 
 
+void mult_diff_mats(
+    complex *diff_mat_H, complex *inv_diff_mat, complex *out,
+    long *edges, int n_bl, int n_eig, int n_grp
+) {
+    /*
+     *  void mult_diff_mats(
+     *      complex *diff_mat_H, complex *inv_diff_mat, complex *out,
+     *      long *edges, int n_bl, int n_eig, int n_grp
+     *  )
+     * 
+     *  Compute the product diff_mat_H @ inv_diff_mat.
+     *
+     *  Parameters
+     *  ----------
+     *  diff_mat_H
+     *      Hermitian conjugate of the diffuse matrix.
+     *  inv_diff_mat
+     *      "Inverse" diffuse matrix.
+     *  out
+     *      Where to write the product.
+     *  edges
+     *      Array denoting the edges of each redundant group.
+     *  n_bl
+     *      Number of baselines.
+     *  n_eig
+     *      Number of eigenmodes per redundant group.
+     *  n_grp
+     *      Number of redundant groups.
+     */
+    for (int i=0; i<n_grp; i++){
+        mymatmul(
+            diff_mat_H+edges[i],
+            inv_diff_mat+n_eig*edges[i],
+            out+i*n_eig*n_eig,
+            n_bl,
+            n_eig,
+            n_eig,
+            n_eig,
+            n_eig,
+            edges[i+1]-edges[i]
+        );
+    }
+}
+
+
 void mult_src_by_blocks(
     complex *blocks_H, complex *src_mat, complex *out, long *edges,
     int n_bl, int n_src, int n_eig, int n_grp

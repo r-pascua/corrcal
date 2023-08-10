@@ -128,6 +128,18 @@ make_all_small_blocks.argtypes = [
     ct.c_int,  # Number of redundant groups
 ]
 
+# Calculate \Delta.H @ \Delta'
+mult_diff_mats = lib.mult_diff_mats
+mult_diff_mats.argtypes = [
+    ct.c_void_p,  # Hermitian conjugate of diffuse matrix
+    ct.c_void_p,  # "Inverse" diffuse matrix
+    ct.c_void_p,  # Where to write the product
+    ct.c_void_p,  # Redundant group edges
+    ct.c_int,  # Number of baselines
+    ct.c_int,  # Number of eigenmodes
+    ct.c_int,  # Number of redundant groups
+]
+
 # Calculate \Delta'.H @ \Sigma
 mult_src_by_blocks = lib.mult_src_by_blocks
 mult_src_by_blocks.argtypes = [

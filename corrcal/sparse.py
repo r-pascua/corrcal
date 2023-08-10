@@ -81,10 +81,10 @@ class SparseCov:
     def copy(self):
         """Return a copy of the class instance."""
         return SparseCov(
-            noise=self.noise,
-            src_mat=self.src_mat,
-            diff_mat=self.diff_mat,
-            edges=self.edges,
+            noise=self.noise.copy(),
+            src_mat=self.src_mat.copy(),
+            diff_mat=self.diff_mat.copy(),
+            edges=self.edges.copy(),
             n_eig=self.n_eig,
             isinv=self.isinv,
         )
