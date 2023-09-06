@@ -6,6 +6,7 @@ from . import _cfuncs
 from . import gridding
 from . import io
 from . import linalg
+from . import mock_sky
 from . import noise
 from . import optimize
 from . import parsers
