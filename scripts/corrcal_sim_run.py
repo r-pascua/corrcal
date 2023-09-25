@@ -64,15 +64,6 @@ if __name__ == "__main__":
     # Keep track of this for later.
     ideal_array = array_layout.copy()
 
-    # Add jitter to antenna positions if requested
-    jitter = config.get("jitter", 0)
-    if jitter > 0:
-        wavelength = constants.c.si.value / freq
-        for ant, pos in array_layout.items():
-            dpos = np.random.normal(loc=0, scale=jitter*wavelength, size=3)
-            dpos[-1] = 0
-            array_layout[ant] = pos + dpos
-
     # Extract other information from the config file.
     beam = AnalyticBeam(config.get("beam", "airy"), diameter=diameter)
     beam_ids = [0,] * len(array_layout)
@@ -81,6 +72,15 @@ if __name__ == "__main__":
     latitude = config.get("latitude", -30.721526120689507)
     longitude = config.get("longitude", 21.428303826863015)
     altitude = config.get("altitude", 1051.690000018105)
+
+    # Add jitter to antenna positions if requested
+    jitter = config.get("jitter", 0)
+    if jitter > 0:
+        wavelength = constants.c.si.value / freq
+        for ant, pos in array_layout.items():
+            dpos = np.random.normal(loc=0, scale=jitter*wavelength, size=3)
+            dpos[-1] = 0
+            array_layout[ant] = pos + dpos
 
     # Make the UVData object.
     uvdata = hera_sim.io.empty_uvdata(
@@ -333,7 +333,7 @@ if __name__ == "__main__":
         loc=1, scale=config.get("flux_err", 0), size=n_src
     )
     phases = 2 * np.pi * uvws @ src_enu[:,select]
-    src_mat = (flux_err*src_fluxes)[None,select] * np.exp(1j * phases)
+    src_mat = (flux_err*src_fluxes[select])[None,:] * np.exp(1j * phases)
 
     # Simulate gains and generate initial guess.
     gain_amp_err = config.get("gain_amp_err", 0.05)
@@ -437,6 +437,13 @@ if __name__ == "__main__":
         init_gains=fit_gains,
         true_gains=true_gains,
         gain_sols=gain_solutions,
+        ant_1_array=ant_1_array,
+        ant_2_array=ant_2_array,
+        edges=edges,
+        enu_antpos=enu_antpos,
+        src_mat=src_mat,
+        diff_mat=diff_mat,
+        noise=noise,
     )
     with open(outdir/f"{basename}_results.yaml", "w") as f:
         yaml.dump(solver_stats, f)
