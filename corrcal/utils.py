@@ -90,14 +90,14 @@ def build_complex_gains(gains : np.ndarray) -> np.ndarray:
 
 def rephase_to_ant(gains, ant=0):
     """Rephase gains to a reference antenna."""
-    if np.iscomplex(gains):
+    if np.iscomplexobj(gains):
         complex_gains = gains.copy()
     else:
         complex_gains = build_complex_gains(gains)
     ref_gain = complex_gains[ant]
     conj_phase = ref_gain.conj() / np.abs(ref_gain)
     rephased_complex_gains = complex_gains * conj_phase
-    if np.iscomplex(gains):
+    if np.iscomplexobj(gains):
         # If input is complex, output should be as well
         return rephased_complex_gains
     else:
