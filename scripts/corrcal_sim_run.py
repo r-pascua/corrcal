@@ -1,5 +1,6 @@
 from astropy.utils import iers
 iers.conf.auto_download = False
+iers.conf.iers_degraded_accuracy = "warn"
 
 import warnings
 warnings.filterwarnings("ignore", "hera_cal")
@@ -58,7 +59,6 @@ parser.add_argument(
 )
 parser.add_argument(
     "--flat_sky",
-    type=bool,
     action="store_true",
     default=False,
     help="Whether to compute the diffuse matrix with in the flat sky limit.",
@@ -264,7 +264,7 @@ if __name__ == "__main__":
 
         # Construct the AltAz frame for coordinate transformations.
         observatory = EarthLocation(latitude, longitude, altitude)
-        altaz = AltAz(location=observatory, obstime=Time(obstime, format="jd")
+        altaz = AltAz(location=observatory, obstime=Time(obstime, format="jd"))
 
         # Prepare the direction cosine grid.
         uvws = freq * (
@@ -307,6 +307,7 @@ if __name__ == "__main__":
         ) ** 2
 
         # Now compute the diffuse matrix.
+        n_eig = config["n_eig"]
         LM = np.array(np.meshgrid(lm_grid, lm_grid))
         diff_mat = np.zeros((edges[-1], n_eig), dtype=complex)
         for grp, (start, stop) in enumerate(zip(edges, edges[1:])):
