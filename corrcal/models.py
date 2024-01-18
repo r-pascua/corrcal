@@ -128,3 +128,173 @@ def build_source_model(
         uvbeam.read(beam)
     else:
         uvbeam = beam.copy()
+
+
+def compute_diffuse_matrix(
+    Tsky,
+    nside,
+    beam,
+    telescope_location,
+    obstime,
+    freq,
+    enu_antpos,
+    ant_1_array,
+    ant_2_array,
+    edges,
+    n_eig,
+    flat_sky=True,
+):
+    """TODO: write docs"""
+    # TODO: switch over from healpy to astropy-healpix
+    if flat_sky:
+        return _compute_diffuse_matrix_from_flat_sky(
+            Tsky=Tsky,
+            nside=nside,
+            beam=beam,
+            telescope_location=telescope_location,
+            obstime=obstime,
+            freq=freq,
+            enu_antpos=enu_antpos,
+            ant_1_array=ant_1_array,
+            ant_2_array=ant_2_array,
+            edges=edges,
+            n_eig=n_eig,
+        )
+    else:
+        return _compute_diffuse_matrix_from_harmonics(
+            Tsky=Tsky,
+            nside=nside,
+            beam=beam,
+            telescope_location=telescope_location,
+            obstime=obstime,
+            freq=freq,
+            enu_antpos=enu_antpos,
+            ant_1_array=ant_1_array,
+            ant_2_array=ant_2_array,
+            edges=edges,
+            n_eig=n_eig,
+        )
+
+
+def _compute_diffuse_matrix_from_harmonics(
+    Tsky,
+    nside,
+    beam,
+    telescope_location,
+    obstime,
+    freq,
+    enu_antpos,
+    ant_1_array,
+    ant_2_array,
+    edges,
+    n_eig,
+):
+    raise NotImplementedError("Need to finish debugging.")
+
+
+def _compute_diffuse_matrix_from_flat_sky(
+    Tsky,
+    nside,
+    beam,
+    telescope_location,
+    obstime,
+    freq,
+    enu_antpos,
+    ant_1_array,
+    ant_2_array,
+    edges,
+    n_eig,
+):
+    from astropy.coordinates import Latitude, Longitude, AltAz
+    from astropy.coordinates import EarthLocation, SkyCoord
+    from astropy.time import Time
+    from astropy_healpix import HEALPix
+    import healpy
+
+    # TODO: insert a check that the beam is OK.
+    # Construct the AltAz frame for coordinate transformations.
+    observatory = EarthLocation(*telescope_location)
+    local_frame = AltAz(location=observatory, obstime=Time(obstime, format="jd"))
+
+    # Prepare the direction cosine grid.
+    uvws = freq * (
+        enu_antpos[ant_2_array] - enu_antpos[ant_1_array]
+    ) / constants.c.si.value
+    umax = np.linalg.norm(uvws, axis=1).max()
+    dl = 1 / (4*umax)
+    n_l = int(2 // dl)
+    if n_l % 2 == 0:
+        n_l += 1  # Ensure we get (l,m) = (0,0)
+    lm_grid = np.linspace(-1, 1, n_l)
+    measure = (lm_grid[1]-lm_grid[0]) ** 2
+
+    # Put the beam and sky onto the (l,m) grid.
+    gridded_beam = np.zeros((n_l, n_l), dtype=float)
+    flat_Tsky = np.zeros(gridded_beam.shape, dtype=float)
+    hpx_grid = HEALPix(nside=nside, order="ring", frame="icrs")
+    for row, m in enumerate(lm_grid):
+        # Figure out which sky positions are above the horizon.
+        lmag = np.sqrt(m**2 + lm_grid**2)
+        select = lmag < 1
+        if select.sum() == 0:
+            continue
+
+        # Compute the azimuth and zenith angle for each of these points.
+        indices = np.argwhere(select).flatten()
+        za = np.arcsin(lmag[select])
+        az = np.arctan2(m, lm_grid[select])
+
+        # Interpolate the beam.
+        gridded_beam[row,select] = beam.interp(
+            az_array=az, za_array=za, freq_array=np.array([freq])
+        )[0][0,0]
+        
+        # Interpolate the sky intensity.
+        coords = SkyCoord(
+            Longitude(np.pi/2 - az, unit="rad"),  # astropy uses E of N
+            Latitude(np.pi/2 - za, unit="rad"),
+            frame=local_frame,
+        ).transform_to("icrs")
+        flat_Tsky[row,select] = hpx_grid.interpolate_bilinear_skycoord(
+            coords, Tsky
+        ) / np.sqrt(1 - lmag[select]**2)  # Apply projection effect to the sky.
+
+    # Now compute the sky power spectrum.
+    sky_pspec = np.abs(
+        np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(flat_Tsky * measure)))
+    ) ** 2
+
+    # Now compute the diffuse matrix.
+    LM = np.array(np.meshgrid(lm_grid, lm_grid))
+    diff_mat = np.zeros((edges[-1], n_eig), dtype=complex)
+    for grp, (start, stop) in enumerate(zip(edges, edges[1:])):
+        fringe = np.exp(
+            2j * np.pi * np.einsum("bi,ilm->blm", uvws[start:stop,:2], LM)
+        )
+        kernel = np.fft.fftshift(
+            np.fft.fft2(
+                np.fft.ifftshift(
+                    gridded_beam[None,...] * fringe, axes=(1,2)
+                ), axes=(1,2)
+            ), axes=(1,2)
+        )
+        block = measure * np.einsum(
+            "puv,quv,uv->pq", kernel, kernel.conj(), sky_pspec
+        )
+
+        # Compute the eigenvalues/vectors for this block.
+        eigvals, eigvecs = np.linalg.eigh(block, "U")
+        if eigvals[0] < eigvals[-1]:
+            eigvals = eigvals[::-1]
+            eigvecs = eigvecs[:,::-1]
+        diff_mat[start:stop] = eigvecs[:,:n_eig] * np.sqrt(
+            eigvals[None,:n_eig]
+        )
+
+    return diff_mat
+
+
+def compute_source_matrix(
+   tmp 
+):
+    pass

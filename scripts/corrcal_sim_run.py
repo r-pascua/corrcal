@@ -225,31 +225,13 @@ if __name__ == "__main__":
         channel_width=1.0,
         array_layout=ideal_array,
     )
-    reds, _, lens, conj = ideal_uvdata.get_redundancies(include_conjugates=True)
-    conj = set(conj)
-    autocorr = uvdata.get_data(0, 0, "xx")
 
     # Get the baselines we'll use for calibration.
     min_length = config.get("min_length", np.sqrt(2) * diameter)
     min_group_size = max(config.get("min_group_size", 5), config["n_eig"])
-    ant_1_array = []
-    ant_2_array = []
-    edges = [0,]
-    idx = 0
-    for group, length in zip(reds, lens):
-        if (length <= min_length) or (len(group) < min_group_size):
-            continue
-        for bl in group:
-            ai, aj = uvdata.baseline_to_antnums(bl)
-            if bl in conj:
-                ai, aj = aj, ai
-            ant_1_array.append(ai)
-            ant_2_array.append(aj)
-            idx += 1
-        edges.append(idx)
-    ant_1_array = np.asarray(ant_1_array)
-    ant_2_array = np.asarray(ant_2_array)
-    edges = np.asarray(edges)
+    ant_1_array, ant_2_array, edges = corrcal.gridding.make_groups_from_uvdata(
+        ideal_uvdata, min_bl_length=min_length, min_group_size=min_group_size
+    )
 
     # Compute diffuse matrix. First, some auxiliary things.
     beam.efield_to_power()
@@ -263,7 +245,7 @@ if __name__ == "__main__":
         from astropy_healpix import HEALPix
 
         # Construct the AltAz frame for coordinate transformations.
-        observatory = EarthLocation(latitude, longitude, altitude)
+        observatory = EarthLocation(longitude, latitude, altitude)
         altaz = AltAz(location=observatory, obstime=Time(obstime, format="jd"))
 
         # Prepare the direction cosine grid.
@@ -478,7 +460,7 @@ if __name__ == "__main__":
     flux_err = np.random.normal(
         loc=1, scale=config.get("flux_err", 0), size=n_src
     )
-    phases = 2 * np.pi * uvws @ src_enu[:,select]
+    phases = -2 * np.pi * uvws @ src_enu[:,select]
     src_mat = (flux_err*src_fluxes[select])[None,:] * np.exp(1j * phases)
 
     # Simulate gains and generate initial guess.
@@ -504,6 +486,7 @@ if __name__ == "__main__":
     integration_time = 1
     channel_width = snr ** 2
     omega_p = np.array([1])
+    autocorr = uvdata.get_data(0, 0, "xx")
     noise_amp = np.abs(autocorr)[0,0] / snr
     noise = np.ones(ant_1_array.size, dtype=complex) * noise_amp
 

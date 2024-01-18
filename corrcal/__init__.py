@@ -7,6 +7,7 @@ from . import gridding
 from . import io
 from . import linalg
 from . import mock_sky
+from . import models
 from . import noise
 from . import optimize
 from . import parsers

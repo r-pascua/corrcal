@@ -8,7 +8,7 @@ try:
 
     HERA_CAL = True
 except (ImportError, FileNotFoundError) as err:  # pragma: no cover
-    if issubclass(err, ImportError):
+    if isinstance(err, ImportError):
         missing = "hera_cal"
     else:
         missing = "git"
@@ -189,6 +189,31 @@ def group_by_redundancy(
         _ = temp_noise.sum()  # Just to make flake8 not complain.
 
     # Next, conjugate antennas and data where appropriate.
+
+
+def make_groups_from_uvdata(uvdata, min_bl_length=0, min_group_size=1):
+    """TODO: write doc"""
+    reds, _, lens, conj = uvdata.get_redundancies(include_conjugates=True)
+    conj = set(conj)
+    ant_1_array = []
+    ant_2_array = []
+    edges = [0,]
+    idx = 0
+    for group, bl_length in zip(reds, lens):
+        if (bl_length < min_bl_length) or (len(group) < min_group_size):
+            continue
+        for bl in group:
+            ai, aj = uvdata.baseline_to_antnums(bl)
+            if bl in conj:
+                ai, aj = aj, ai
+            ant_1_array.append(ai)
+            ant_2_array.append(aj)
+            idx += 1
+        edges.append(idx)
+    ant_1_array = np.array(ant_1_array)
+    ant_2_array = np.array(ant_2_array)
+    edges = np.array(edges)
+    return ant_1_array, ant_2_array, edges
 
 
 def apply_sort(array, sort_key, is_conj):
