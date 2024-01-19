@@ -245,9 +245,16 @@ def _compute_diffuse_matrix_from_flat_sky(
         az = np.arctan2(m, lm_grid[select])
 
         # Interpolate the beam.
-        gridded_beam[row,select] = beam.interp(
+        beam_vals = beam.interp(
             az_array=az, za_array=za, freq_array=np.array([freq])
         )[0][0,0]
+        if beam_vals.ndim == 3:
+            # For some versions of pyuvsim, this returns an array with shape
+            # (Nvispol, Nfreq, Npix); for now I'll be assuming that we want
+            # the XX polarization.
+            # TODO: Update this to correctly handle different polarizations
+            beam_vals = beam_vals[0,0]
+        gridded_beam[row,select] = beam_vals
         
         # Interpolate the sky intensity.
         coords = SkyCoord(
