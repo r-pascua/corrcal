@@ -2,8 +2,10 @@
 requires = ["setuptools>=42", "wheel", "numpy", "setuptools_scm[toml]>=3.4"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools_scm]
+[tool.setuptools]
 packages = ["corrcal"]
+
+[tool.setuptools_scm]
 
 [tool.black]
 line-length = 79
