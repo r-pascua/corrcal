@@ -6,7 +6,7 @@ ext = Extension(
     sources=["corrcal/src/c_funcs.c"],
     include_dirs=["corrcal/src"],
     extra_compile_args=[
-        "-fopenmp", "-O3", "-fPIC"
+        "-fopenmp", "-O3", "-fPIC", "-std=c99"
     ],
     extra_link_args=["-shared", "-lgomp", "-lm"],
 )
