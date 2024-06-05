@@ -10,10 +10,10 @@ dependencies:
     - numpy>=1.18
     - pip>=20.0
     - pytest-cov>=2.7.1
-    - python<3.9
+    - python
     - pyuvdata
     - scipy>=1.4.1
+    - hera-calibration
+    - uvtools
     - pip:
-        - git+https://github.com/HERA-Team/uvtools.git
-        - git+https://github.com/HERA-Team/hera_cal.git
         - pyfof
