@@ -1,12 +1,6 @@
 [build-system]
-requires = ["setuptools>=42", "wheel", "numpy", "setuptools_scm[toml]>=3.4"]
+requires = ["setuptools>=42", "wheel", "numpy", "setuptools_scm>=6.2"]
 build-backend = "setuptools.build_meta"
-
-[project]
-dynamic = ["version"]
-
-[tool.setuptools]
-packages = ["corrcal"]
 
 [tool.setuptools_scm]
 
