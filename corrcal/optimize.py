@@ -413,6 +413,13 @@ def compute_trace(cov, inv_cov, gain_mat, grad_gain):
     G_Delta = gain_mat[:,None] * cov.diff_mat
     G_Sigma = gain_mat[:,None] * cov.src_mat
 
+    # TODO: write an alternate routine for computing the trace, but stick
+    # it in the gradient routine. Since the gradient is diagonal, we actually
+    # only need the diagonal entries from the (Nbl,Nbl) matrices in order to
+    # compute the trace. There should be a reasonably fast way of computing
+    # these--something that goes like O(Nbl*Neig**2) (i.e., same scaling as
+    # the likelihood evaluation)
+    # i.e. tr(dG D (D^\dag G^\dag D') D'^\dag)
     # Compute the third term: tr(D'^\dag dG D D^\dag G^\dag D')
     tmp = linalg.mult_diff_mats(
         inv_cov.diff_mat.T.conj(), dG_Delta, cov.edges
