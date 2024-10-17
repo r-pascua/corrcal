@@ -251,8 +251,8 @@ def nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.inf):
         Covariance matrix with inversion methods and methods for building
         gain matrices.
     data
-        Complex-valued array containing the data sorted into quasi-redundant
-        groups.
+        Real-valued array containing the data sorted into quasi-redundant
+        groups in alternating real/imaginary format.
     ant_1_inds
         Indices of the first antenna in each baseline in the sorted data.
     ant_2_inds
@@ -272,7 +272,7 @@ def nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.inf):
     cov = cov.copy()
     cov.apply_gains(gains / scale, ant_1_inds, ant_2_inds)
     cinv, logdet = cov.inv(return_det=True)
-    chisq = data.conj() @ (cinv @ data)
+    chisq = data @ (cinv @ data)
 
     # Use a Gaussian prior that the average phase should be nearly zero
     phases = np.arctan2(gains[1::2], gains[::2])
@@ -284,7 +284,7 @@ def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.
     """Calculate the gradient of the negative log-likelihood.
 
     This is the gradient with respect to the real/imaginary per-antenna gains.
-    See Eq. ?? of Pascua+ 22 for details of what is being calculated.
+    See Eq. ?? of Pascua+ 25 for details of what is being calculated.
 
     Parameters
     ----------
@@ -299,48 +299,37 @@ def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.
     cinv = cov.copy()
     cinv.apply_gains(gains/scale, ant_1_inds, ant_2_inds)
     cinv = cinv.inv(return_det=False)
-    cinv_data = cinv @ data
+    p = cinv @ data
     cov = cov.copy()
     cov.noise = np.zeros_like(cov.noise)
-    tmp_data = cov @ (gain_mat.conj() * cinv_data)
+    
+    # Compute p = (C-N) @ G^T @ p.
+    q = p.copy()
+    q[::2] = gain_mat.real * p[::2] + gain_mat.imag * p[1::2]
+    q[1::2] = gain_mat.imag * p[::2] - gain_mat.real * p[1::2]
+    q = cov @ q
 
-    # Initialize important arrays for the gradient calculation.
-    gradient = np.zeros_like(gains)
-    tan_phs = gains[1::2] / gains[::2]
-    phases = np.arctan2(gains[1::2], gains[::2])
-    grad_phs_prefac = 2 * phases.sum() / (
-        phs_norm_fac**2 * gains[::2] * (1 + tan_phs**2)
+    # Now compute s = Re(q^\dag @ p), t = Im(q^\dag @ p).
+    s = p[::2]*q[::2] + p[1::2]*q[1::2]
+    t = p[1::2]*q[::2] - p[::2]*q[1::2]
+    grad_chisq = linalg.accumulate_grad_chisq(
+        gains, s, t, ant_1_inds, ant_2_inds
     )
 
-    # Calculate the gradient antenna by antenna.
-    # TODO: see if this is the fastest way to calculate the gradient.
-    for k in range(gains.size):
-        grad_chisq = 0
-        grad_gains = np.zeros_like(gain_mat)
-        if k % 2 == 0:  # Derivative w.r.t. real part of gain
-            grad_gains += np.where(
-                ant_1_inds == k//2, complex_gains[ant_2_inds].conj(), 0
-            )
-            grad_gains += np.where(
-                ant_2_inds == k//2, complex_gains[ant_1_inds], 0
-            )
-            grad_phs_norm = -grad_phs_prefac[k//2] * gains[k+1] / gains[k]
-        else:  # Derivative w.r.t. imaginary part of gain
-            grad_gains += np.where(
-                ant_1_inds == k//2, 1j*complex_gains[ant_2_inds].conj(), 0
-            )
-            grad_gains += np.where(
-                ant_2_inds == k//2, -1j*complex_gains[ant_1_inds], 0
-            )
-            grad_phs_norm = grad_phs_prefac[k//2]
+    # Compute the contribution from the gradient of the determinant.
+    grad_logdet = np.zeros_like(gains)
 
-        # This should be a bit faster than the dumb thing, but probably isn't
-        # as fast as it can possibly be.
-        grad_chisq = 2 * (cinv_data.conj() * grad_gains) @ tmp_data
-        grad_logdet = compute_trace(cov, cinv, gain_mat, grad_gains)
-        gradient[k] = grad_logdet - grad_chisq.real + grad_phs_norm
+    # Accumulate the contributions from the phase normalization.
+    amps = np.sqrt(gains[::2]**2 + gains[1::2]**2)
+    phases = np.arctan2(gains[1::2], gains[::2])
+    n_ants = complex_gains.size
+    grad_phs_prefac = 2 * phases / (n_ants * phs_norm_fac**2)
+    grad_phs = np.zeros_like(gains)
+    grad_phs[::2] = -grad_phs_prefac * np.sin(phases)
+    grad_phs[1::2] = grad_phs_prefac * np.cos(phases)
 
-    return gradient / scale
+
+    return (0.5*grad_logdet + grad_chisq + grad_phs) / scale
 
 
 def compute_trace(cov, inv_cov, gain_mat, grad_gain):
