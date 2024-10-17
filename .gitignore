@@ -8,3 +8,4 @@ build*
 *\.pdf
 *\.fits
 *\.ipynb_checkpoints
+docs/tutorials/validation_tests/*
