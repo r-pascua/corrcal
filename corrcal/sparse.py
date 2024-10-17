@@ -72,10 +72,12 @@ class SparseCov:
 
     def apply_gains(self, gains, ant_1_array, ant_2_array):
         """Apply complex gains to source and diffuse matrices."""
-        gains = gains[::2] + 1j*gains[1::2]
-        gains = gains[ant_1_array] * gains[ant_2_array].conj()
-        self.diff_mat = gains[:,None] * self.diff_mat
-        self.src_mat = gains[:,None] * self.src_mat
+        self.diff_mat = utils.apply_gains_to_mat(
+            gains, self.diff_mat, ant_1_array, ant_2_array
+        )
+        self.src_mat = utils.apply_gains_to_mat(
+            gains, self.src_mat, ant_1_array, ant_2_array
+        )
 
 
     def copy(self):

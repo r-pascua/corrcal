@@ -5,6 +5,18 @@ from . import linalg
 from . import _cfuncs
 
 
+def apply_gains_to_mat(gains, mat, ant_1_array, ant_2_array):
+    """Apply a gain-like matrix to a provided matrix."""
+    complex_gains = gains[::2] + 1j*gains[1::2]
+    gain_mat = (
+        complex_gains[ant_1_array,None] * complex_gains[ant_2_array,None].conj()
+    )
+    out = np.zeros_like(mat)
+    out[::2] = gain_mat.real * mat[::2] - gain_mat.imag * mat[1::2]
+    out[1::2] = gain_mat.imag * mat[::2] + gain_mat.real * mat[1::2]
+    return out
+    
+
 def check_parallel(parallel, gpu):
     """
     Ensure that only parallelization or GPU acceleration is requested.
