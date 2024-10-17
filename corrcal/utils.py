@@ -83,23 +83,6 @@ def scale_cov_by_gains(cov, gain_mat):
     return linalg.diagmul(gain_mat, linalg.diagmul(cov, gain_mat.conj()))
 
 
-def build_complex_gains(gains : np.ndarray) -> np.ndarray:
-    """Turn split real/imag gain array into complex gains.
-
-    Parameters
-    ----------
-    gains
-        Array of per-antenna gains, arranged so that even elements are the
-        real part of the gain and odd elements are the imaginary part.
-
-    Returns
-    -------
-    complex_gains
-        Complex per-antenna gains.
-    """
-    return gains[::2] + 1j*gains[1::2]
-
-
 def rephase_to_ant(gains, ant=0):
     """Rephase gains to a reference antenna."""
     if np.iscomplexobj(gains):
