@@ -47,18 +47,18 @@ class SparseCov:
         """
         Decide how to split docs between class and constructor.
         """
-        self.noise = np.ascontiguousarray(noise, dtype=complex)
-        self.src_mat = np.ascontiguousarray(src_mat, dtype=complex)
-        self.diff_mat = np.ascontiguousarray(diff_mat, dtype=complex)
+        self.noise = np.ascontiguousarray(noise, dtype=float)
+        self.src_mat = np.ascontiguousarray(src_mat, dtype=float)
+        self.diff_mat = np.ascontiguousarray(diff_mat, dtype=float)
         self.edges = np.array(edges, dtype=int)
         self.n_grp = edges.size - 1
-        self.n_bls = src_mat.shape[0]
+        self.n_bls = src_mat.shape[0] // 2  # Alternating real/imag
         self.n_src = src_mat.shape[1]
         self.n_eig = n_eig
-        self.diff_is_diag = diff_mat.shape == (self.n_bls, n_eig)
+        self.diff_is_diag = diff_mat.shape == (2*self.n_bls, n_eig)
         self.isinv = isinv
         if not self.diff_is_diag:
-            if diff_mat.shape != (self.n_bls, self.n_grp*n_eig):
+            if diff_mat.shape != (2*self.n_bls, self.n_grp*n_eig):
                 raise ValueError(
                     "Diffuse matrix shape is not understood. See class "
                     "docstring for information on expected shape."
@@ -93,13 +93,13 @@ class SparseCov:
 
 
     def expand(self):
-        """Return the dense covariance."""
+        """Return the dense covariance (i.e., multiply and add terms)."""
         if self.diff_is_diag:
             diff_mat = np.zeros(
-                (self.n_bls, self.n_grp*self.n_eig), dtype=complex
+                (self.n_bls, self.n_grp*self.n_eig), dtype=float
             )
             for grp in range(self.n_grp):
-                start, stop = self.edges[grp:grp+2]
+                start, stop = 2 * self.edges[grp:grp+2]
                 left, right = np.arange(grp, grp+2) * self.n_eig
                 diff_mat[start:stop,left:right] = self.diff_mat[start:stop]
         else:
@@ -252,7 +252,7 @@ class SparseCov:
             # Calculate the small block for this quasi-redundant group.
             block = self.diff_mat[start:stop, left:right].copy()
             block = np.diag(self.noise[start:stop]) + block @ block.T.conj()
-            # See Eq. ?? of Pascua+ 22 for details on determinant calculation.
+            # See Eq. ?? of Pascua+ 25 for details on determinant calculation.
             if return_det:
                 logdet += 2 * np.log(np.diag(np.linalg.cholesky(block))).sum()
             Cinv[start:stop, start:stop] = np.linalg.inv(block)
