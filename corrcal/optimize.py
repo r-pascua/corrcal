@@ -1,5 +1,6 @@
 import numpy as np
 import warnings
+import numba
 
 from . import _cfuncs
 from . import linalg
@@ -312,25 +313,71 @@ def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.
     # Now compute s = Re(q^\dag @ p), t = Im(q^\dag @ p).
     s = p[::2]*q[::2] + p[1::2]*q[1::2]
     t = p[1::2]*q[::2] - p[::2]*q[1::2]
-    grad_chisq = linalg.accumulate_grad_chisq(
-        gains, s, t, ant_1_inds, ant_2_inds
+
+    # Compute the "inverse power" for use in the trace calculation.
+    inv_power = np.sum(
+        cinv.diff_mat[::2]**2 + cinv.diff_mat[1::2]**2, axis=1
+    ) + np.sum(
+        cinv.src_mat[::2]**2 + cinv.src_mat[1::2]**2, axis=1
     )
 
-    # Compute the contribution from the gradient of the determinant.
-    grad_logdet = np.zeros_like(gains)
+    gradient = accumulate_gradient(
+        gains, s, t, inv_power, ant_1_inds, ant_2_inds
+    )
 
     # Accumulate the contributions from the phase normalization.
     amps = np.sqrt(gains[::2]**2 + gains[1::2]**2)
     phases = np.arctan2(gains[1::2], gains[::2])
     n_ants = complex_gains.size
     grad_phs_prefac = 2 * phases / (n_ants * phs_norm_fac**2)
-    grad_phs = np.zeros_like(gains)
-    grad_phs[::2] = -grad_phs_prefac * np.sin(phases)
-    grad_phs[1::2] = grad_phs_prefac * np.cos(phases)
+    gradient[::2] -= grad_phs_prefac * np.sin(phases)
+    gradient[1::2] += grad_phs_prefac * np.cos(phases)
 
 
-    return (0.5*grad_logdet + grad_chisq + grad_phs) / scale
+    return gradient / scale
 
+
+@numba.njit
+def accumulate_gradient(gains, s, t, P, noise, ant_1_inds, ant_2_inds):
+    """Loop over baselines and accumulate the gradient.
+
+    TODO: add a reference for the math; for now it's in a Notion post,
+    but eventually it should be moved to CorrCal paper I.
+
+    Quick notes: s, t, P all have length Nbls
+    """
+    gradient = np.zeros_like(gains)
+    complex_gains = gains[::2] + 1j*gains[1::2]
+    gain_mat = complex_gains[ant_1_inds] * complex_gains[ant_2_inds].conj()
+
+    for k in numba.prange(ant_1_inds.size):
+        k1, k2 = ant_1_inds[k], ant_2_inds[k]
+
+        # Accumulate the contribution from the chi-squared gradient.
+        gradient[::2][k1] -= gains[::2][k2]*s[k] - gains[1::2][k2]*t[k]
+        gradient[::2][k2] -= gains[::2][k1]*s[k] + gains[1::2][k1]*t[k]
+        gradient[1::2][k1] -= gains[1::2][k2]*s[k] + gains[::2][k2]*t[k]
+        gradient[1::2][k2] -= gains[1::2][k1]*s[k] - gains[::2][k1]*t[k]
+
+        # Accumulate the contribution from the trace.
+        Gk = gain_mat[k]
+        Gsq = np.abs(Gk) ** 2
+        sig = noise[::2][k]
+        prefac = 2*(1 - Gsq)/Gsq - P[k]*sig
+        gradient[::2][k1] += prefac * (
+            Gk.real*gains[::2][k2] - Gk.imag*gains[1::2][k2]
+        )
+        gradient[::2][k2] += prefac * (
+            Gk.real*gains[::2][k1] + Gk.imag*gains[1::2][k1]
+        )
+        gradient[1::2][k1] += prefac * (
+            Gk.real*gains[1::2][k2] + Gk.imag*gains[::2][k2]
+        )
+        gradient[1::2][k2] += prefac * (
+            Gk.real*gains[1::2][k1] - Gk.imag*gains[::2][k1]
+        )
+
+    return 2 * gradient
 
 def compute_trace(cov, inv_cov, gain_mat, grad_gain):
     r"""Helper function for the gradient routine.
