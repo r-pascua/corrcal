@@ -30,7 +30,7 @@ class SparseCov:
         as the full diffuse matrix.
     edges
         Array of integers denoting the edges of each quasi-redundant
-        group.
+        group, accounting for the real/imaginary split.
     n_grp
         The number of quasi-redundant groups in the array.
     n_src
@@ -63,6 +63,12 @@ class SparseCov:
                     "Diffuse matrix shape is not understood. See class "
                     "docstring for information on expected shape."
                 )
+        if np.any(self.edges % 2):
+            raise ValueError(
+                "The `edges` array appears to be formatted incorrectly. "
+                "Please ensure the `edges` array also accounts for the "
+                "real/imaginary split along the baseline axis."
+            )
 
 
     def __matmul__(self, other):
@@ -99,7 +105,7 @@ class SparseCov:
                 (2*self.n_bls, self.n_grp*self.n_eig), dtype=float
             )
             for grp in range(self.n_grp):
-                start, stop = 2 * self.edges[grp:grp+2]
+                start, stop = self.edges[grp:grp+2]
                 left, right = np.arange(grp, grp+2) * self.n_eig
                 diff_mat[start:stop,left:right] = self.diff_mat[start:stop]
         else:

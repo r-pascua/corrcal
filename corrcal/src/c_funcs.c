@@ -2,14 +2,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <omp.h>
-#include <complex.h>
+#include <double.h>
 #include <math.h>
 #include "c_funcs.h"
 
 struct sparse_cov *init_cov(
-    complex *noise,
-    complex *diff_mat,
-    complex *src_mat,
+    double *noise,
+    double *diff_mat,
+    double *src_mat,
     int n_bl,
     int n_eig,
     int n_src,
@@ -19,9 +19,9 @@ struct sparse_cov *init_cov(
 ) {
     /*
      *  struct sparse_cov *init_cov(
-     *      complex *noise,
-     *      complex *diff_mat,
-     *      complex *src_mat,
+     *      double *noise,
+     *      double *diff_mat,
+     *      double *src_mat,
      *      int n_bl,
      *      int n_eig,
      *      int n_src,
@@ -38,11 +38,11 @@ struct sparse_cov *init_cov(
      *      Diagonal of noise variance matrix.
      *  diff_mat
      *      Block-diagonal elements of the diffuse matrix, sorted by redundant
-     *      groups. Should have shape (n_bl, n_eig). See discussion in Section
+     *      groups. Should have shape (2*n_bl, n_eig). See discussion in Section
      *      ?? of Pascua+ 2023 for details.
      *  src_mat
      *      Source matrix, sorted by redundant groups. Should have shape
-     *      (n_bl, n_src). See discussion in Section ?? of Pascua+ 2023 for
+     *      (2*n_bl, n_src). See discussion in Section ?? of Pascua+ 2023 for
      *      details.
      *  n_bl
      *      Number of baselines in the data.
@@ -82,10 +82,10 @@ struct sparse_cov *init_cov(
 }
 
 
-void matmul(complex *left, complex *right, complex *out, int a, int b, int c) {
+void matmul(double *left, double *right, double *out, int a, int b, int c) {
     /*
      *  void mamtul(
-     *      *complex left, complex *right, complex *out, int a, int b, int c
+     *      *double left, double *right, double *out, int a, int b, int c
      *  )
      *
      *  Parallelized routine for performing out = left @ right.
@@ -109,7 +109,7 @@ void matmul(complex *left, complex *right, complex *out, int a, int b, int c) {
     for (int ij=0; ij<a*c; ij++) {
         int i = ij / c;
         int j = ij % c;
-        complex sum = 0;
+        double sum = 0;
         for (int k=0; k<b; k++) {
             sum += left[i*b+k] * right[k*c+j];
         }
@@ -119,12 +119,12 @@ void matmul(complex *left, complex *right, complex *out, int a, int b, int c) {
 
 
 void mymatmul(
-    complex *left, complex *right, complex *out, int stridea, int strideb,
+    double *left, double *right, double *out, int stridea, int strideb,
     int stridec, int m, int n, int l
 ) {
     /*
      *  void matmul(
-     *      complex *left, complex *right, complex *out,
+     *      double *left, double *right, double *out,
      *      int stridea, int strideb, int stridec,
      *      int m, int n, int l
      *  )
@@ -164,7 +164,7 @@ void mymatmul(
 
     for (int i=0; i<m; i++){
         for (int j=0; j<n; j++) {
-            complex tmp = 0;
+            double tmp = 0;
             for (int k=0; k<l; k++) {
                 tmp += left[i*stridea+k] * right[k*strideb+j];
             }
@@ -175,12 +175,12 @@ void mymatmul(
 
 
 void block_multiply(
-    complex *blocks, complex *diffuse_mat, complex *out, long *edges,
+    double *blocks, double *diffuse_mat, double *out, long *edges,
     int n_eig, int n_grp
 ) {
     /*
      *  void block_multiply(
-     *      complex *blocks, complex *diffuse_mat, complex *out,
+     *      double *blocks, double *diffuse_mat, double *out,
      *      long *edges, int n_eig, int n_grp
      *  )
      *
@@ -193,9 +193,9 @@ void block_multiply(
      *      array should have shape (n_grp, n_eig, n_eig) (i.e., it contains
      *      n_grp square blocks each with shape (n_eig, n_eig)).
      *  diffuse_mat
-     *      Diffuse matrix sorted into redundant groups, with shape (n, n_eig).
+     *      Diffuse matrix sorted into redundant groups, with shape (2*n_bl, n_eig).
      *  out
-     *      Where to write the product. Should have shape (n_bl, n_eig).
+     *      Where to write the product. Should have shape (2*n_bl, n_eig).
      *  edges
      *      Array specifying the edges of each redundant group. For example,
      *      edges[i] gives the start of group i.
@@ -228,13 +228,14 @@ void block_multiply(
 }
 
 
+// TODO: potentially delete?
 void mult_diff_mats(
-    complex *diff_mat_H, complex *inv_diff_mat, complex *out,
+    double *diff_mat_H, double *inv_diff_mat, double *out,
     long *edges, int n_bl, int n_eig, int n_grp
 ) {
     /*
      *  void mult_diff_mats(
-     *      complex *diff_mat_H, complex *inv_diff_mat, complex *out,
+     *      double *diff_mat_H, double *inv_diff_mat, double *out,
      *      long *edges, int n_bl, int n_eig, int n_grp
      *  )
      * 
@@ -273,13 +274,14 @@ void mult_diff_mats(
 }
 
 
+// TODO: potentially delete?
 void mult_src_by_blocks(
-    complex *blocks_H, complex *src_mat, complex *out, long *edges,
+    double *blocks_H, double *src_mat, double *out, long *edges,
     int n_bl, int n_src, int n_eig, int n_grp
 ) {
     /*
      *  void mult_src_by_blocks(
-     *      complex *blocks_H, complex *src_mat, complex *out, long *edges,
+     *      double *blocks_H, double *src_mat, double *out, long *edges,
      *      int n_bl, int n_src, int n_eig, int n_grp
      *  )
      *
@@ -334,8 +336,9 @@ void mult_src_by_blocks(
 }
 
 
+// TODO: potentially delete?
 void mult_src_blocks_by_diffuse(
-    complex *inv_diff_mat, complex *src_blocks, complex *out, long *edges,
+    double *inv_diff_mat, double *src_blocks, double *out, long *edges,
     int n_src, int n_eig, int n_grp
 ) {
     /*
@@ -378,9 +381,9 @@ void mult_src_blocks_by_diffuse(
 }
 
 
-void tril_inv(complex *mat, complex *out, int n) {
+void tril_inv(double *mat, double *out, int n) {
     /*
-     *  void tril_inv(complex *mat, complex *out, int n)
+     *  void tril_inv(double *mat, double *out, int n)
      *
      *  Invert a lower-triangular (n,n) matrix.
      *
@@ -396,7 +399,7 @@ void tril_inv(complex *mat, complex *out, int n) {
     for (int i=0; i<n; i++) {
         out[i*n+i] = 1 / mat[i*n+i];
         for (int j=0; j<i; j++) {
-            complex tmp = 0;
+            double tmp = 0;
             for (int k=0; k<i; k++) {
                 tmp += mat[i*n+k] * out[k*n+j];
             }
@@ -406,9 +409,9 @@ void tril_inv(complex *mat, complex *out, int n) {
 }
 
 
-void many_tril_inv(complex *mat, complex *out, int n, int n_block) {
+void many_tril_inv(double *mat, double *out, int n, int n_block) {
     /*
-     *  void many_tril_inv(complex *mat, complex *out, int n, int n_block)
+     *  void many_tril_inv(double *mat, double *out, int n, int n_block)
      *
      *  Invert n_block lower-triangular matrices in parallel.
      *
@@ -430,9 +433,9 @@ void many_tril_inv(complex *mat, complex *out, int n, int n_block) {
 }
 
 
-void cholesky(complex *mat, complex *out, int n) {
+void cholesky(double *mat, double *out, int n) {
     /*
-     *  void cholesky(complex *mat, complex *out, int n)
+     *  void cholesky(double *mat, double *out, int n)
      *
      *  Compute the Cholesky decomposition of an (n,n) Hermitian matrix.
      *
@@ -447,7 +450,7 @@ void cholesky(complex *mat, complex *out, int n) {
      */
     for (int i=0; i<n; i++) {
         for (int j=0; j<=i; j++) {
-            complex tmp = 0;
+            double tmp = 0;
             for (int k=0; k<j; k++) {
                 tmp += out[i*n+k] * conj(out[j*n+k]);
             }
@@ -467,9 +470,9 @@ void cholesky(complex *mat, complex *out, int n) {
 }
 
 
-void cholesky_inplace(complex *mat, int n) {
+void cholesky_inplace(double *mat, int n) {
     /*
-     *  void cholesky_inplace(complex *mat, int n)
+     *  void cholesky_inplace(double *mat, int n)
      *
      *  Compute the Cholesky decomposition of an (n,n) matrix in-place.
      *
@@ -482,7 +485,7 @@ void cholesky_inplace(complex *mat, int n) {
      */
     for (int i=0; i<n; i++) {
         for (int j=0; j<=i; j++) {
-            complex tmp = 0;
+            double tmp = 0;
             for (int k=0; k<j; k++) {
                 tmp += mat[i*n+k] * conj(mat[j*n+k]);
             }
@@ -496,10 +499,10 @@ void cholesky_inplace(complex *mat, int n) {
 }
 
 
-void many_chol(complex *blocks, complex *out, int block_size, int n_blocks) {
+void many_chol(double *blocks, double *out, int block_size, int n_blocks) {
     /*
      *  void many_chol(
-     *      complex *blocks, complex *out, int block_size, int n_blocks
+     *      double *blocks, double *out, int block_size, int n_blocks
      *  )
      *
      *  Perform Cholesky decomposition on many matrices in parallel.
@@ -524,9 +527,9 @@ void many_chol(complex *blocks, complex *out, int block_size, int n_blocks) {
 }
 
 
-void many_chol_inplace(complex *blocks, int block_size, int n_blocks) {
+void many_chol_inplace(double *blocks, int block_size, int n_blocks) {
     /*
-     *  void many_chol(complex *blocks, int *block_sizes, int n_blocks)
+     *  void many_chol(double *blocks, int *block_sizes, int n_blocks)
      *
      *  Perform in-place Cholesky decomposition on many matrices in parallel.
      *
@@ -549,12 +552,12 @@ void many_chol_inplace(complex *blocks, int block_size, int n_blocks) {
 
 
 void make_small_block(
-    complex *noise_diag, complex *diffuse_mat, complex *out,
+    double *noise_diag, double *diffuse_mat, double *out,
     int n_eig, int start, int stop
 ) {
     /*
      *  void make_small_block(
-     *      complex *noise_diag, complex *diffuse_mat, complex *out,
+     *      double *noise_diag, double *diffuse_mat, double *out,
      *      int n_eig, int start, int stop
      *  )
      *
@@ -584,27 +587,27 @@ void make_small_block(
      */
     for (int i=0; i<n_eig; i++) {
         for (int j=i; j<n_eig; j++) {
-            complex sum = 0;
+            double sum = 0;
             for (int k=start; k<stop; k++) {
-                complex tmp = (
-                    conj(diffuse_mat[k*n_eig+i]) * diffuse_mat[k*n_eig+j]
+                double tmp = (
+                    diffuse_mat[k*n_eig+i] * diffuse_mat[k*n_eig+j]
                 );
                 sum += tmp / noise_diag[k];
             }
             out[i*n_eig+j] = sum;
-            out[j*n_eig+i] = conj(sum);
+            out[j*n_eig+i] = sum;
         }
     }
 }
 
 
 void make_all_small_blocks(
-    complex *noise_diag, complex *diffuse_mat, complex *out,
+    double *noise_diag, double *diffuse_mat, double *out,
     long *edges, int n_eig, int n_block
 ) {
     /*
      *  void make_all_small_blocks(
-     *      complex *noise_diag, complex *diffuse_mat, complex *out,
+     *      double *noise_diag, double *diffuse_mat, double *out,
      *      long *edges, int n_eig, int n_block
      *  )
      *
@@ -628,7 +631,7 @@ void make_all_small_blocks(
      *
      *  Notes
      *  -----
-     *  This function performs the operation out = diff_mat.H @ Ninv @ diff_mat
+     *  This function performs the operation out = diff_mat.T @ Ninv @ diff_mat
      *  for all redundant groups as part of the first application of the
      *  Woodbury identity. See the discussion in Section ?? of Pascua+ 2023
      *  for details.
@@ -646,10 +649,10 @@ void make_all_small_blocks(
 }
 
 
-void sparse_cov_times_vec(struct sparse_cov *cov, complex *vec, complex *out) {
+void sparse_cov_times_vec(struct sparse_cov *cov, double *vec, double *out) {
     /*
      *  void sparse_cov_times_vec(
-     *      struct sparse_cov *cov, complex *vec, complex *out
+     *      struct sparse_cov *cov, double *vec, double *out
      *  )
      *
      *  Multiply a vector by the sparse covariance from the left.
@@ -664,10 +667,10 @@ void sparse_cov_times_vec(struct sparse_cov *cov, complex *vec, complex *out) {
      *      Where to write the output.
      */
     // Iniitialize the output.
-    memset(out, 0, sizeof(complex) * cov->n_bl);
+    memset(out, 0, 2 * sizeof(double) * cov->n_bl);
 
     // Multiply by the noise variance.
-    for (int i=0; i<cov->n_bl; i++){
+    for (int i=0; i<2*cov->n_bl; i++){
         out[i] += cov->noise[i] * vec[i];
     }
 
@@ -677,9 +680,9 @@ void sparse_cov_times_vec(struct sparse_cov *cov, complex *vec, complex *out) {
         // Multiply by the diffuse covariance in blocks.
         for (int i=0; i<cov->n_grp; i++) {
             for (int j=0; j<cov->n_eig; j++) {
-                complex tmp = 0;
+                double tmp = 0;
                 for (int k=cov->edges[i]; k<cov->edges[i+1]; k++) {
-                    tmp += vec[k] * conj(cov->diff_mat[k*cov->n_eig+j]);
+                    tmp += vec[k] * cov->diff_mat[k*cov->n_eig+j];
                 }
                 for (int k=cov->edges[i]; k<cov->edges[i+1]; k++) {
                     out[k] -= tmp * cov->diff_mat[k*cov->n_eig+j];
@@ -689,20 +692,20 @@ void sparse_cov_times_vec(struct sparse_cov *cov, complex *vec, complex *out) {
 
         // Multiply by the source covariance.
         for (int i=0; i<cov->n_src; i++) {
-            complex tmp = 0;
-            for (int j=0; j<cov->n_bl; j++) {
-                tmp += vec[j] * conj(cov->src_mat[j*cov->n_src+i]);
+            double tmp = 0;
+            for (int j=0; j<2*cov->n_bl; j++) {
+                tmp += vec[j] * cov->src_mat[j*cov->n_src+i];
             }
-            for (int j=0; j<cov->n_bl; j++) {
+            for (int j=0; j<2*cov->n_bl; j++) {
                 out[j] -= tmp * cov->src_mat[j*cov->n_src+i];
             }
         }
     } else {
         for (int i=0; i<cov->n_grp; i++) {
             for (int j=0; j<cov->n_eig; j++) {
-                complex tmp = 0;
+                double tmp = 0;
                 for (int k=cov->edges[i]; k<cov->edges[i+1]; k++) {
-                    tmp += vec[k] * conj(cov->diff_mat[k*cov->n_eig+j]);
+                    tmp += vec[k] * cov->diff_mat[k*cov->n_eig+j];
                 }
                 for (int k=cov->edges[i]; k<cov->edges[i+1]; k++) {
                     out[k] += tmp * cov->diff_mat[k*cov->n_eig+j];
@@ -711,11 +714,11 @@ void sparse_cov_times_vec(struct sparse_cov *cov, complex *vec, complex *out) {
         }
 
         for (int i=0; i<cov->n_src; i++) {
-            complex tmp = 0;
-            for (int j=0; j<cov->n_bl; j++) {
-                tmp += vec[j] * conj(cov->src_mat[j*cov->n_src+i]);
+            double tmp = 0;
+            for (int j=0; j<2*cov->n_bl; j++) {
+                tmp += vec[j] * cov->src_mat[j*cov->n_src+i];
             }
-            for (int j=0; j<cov->n_bl; j++) {
+            for (int j=0; j<2*cov->n_bl; j++) {
                 out[j] += tmp * cov->src_mat[j*cov->n_src+i];
             }
         }
@@ -724,31 +727,31 @@ void sparse_cov_times_vec(struct sparse_cov *cov, complex *vec, complex *out) {
 
 
 void sparse_cov_times_vec_wrapper(
-    complex *noise,
-    complex *diff_mat,
-    complex *src_mat,
+    double *noise,
+    double *diff_mat,
+    double *src_mat,
     int n_bl,
     int n_eig,
     int n_src,
     int n_grp,
     long *edges,
     int isinv,
-    complex *vec,
-    complex *out
+    double *vec,
+    double *out
 ) {
     /*
      *  void sparse_cov_times_vec_wrapper(
-     *      complex *noise,
-     *      complex *diff_mat,
-     *      complex *src_mat,
+     *      double *noise,
+     *      double *diff_mat,
+     *      double *src_mat,
      *      int n_bl,
      *      int n_eig,
      *      int n_src,
      *      int n_grp,
      *      long *edges,
      *      int isinv,
-     *      complex *vec,
-     *      complex *out
+     *      double *vec,
+     *      double *out
      *  )
      *
      *  Thin wrapper for performing sparse matrix-vector multiplication.
