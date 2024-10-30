@@ -96,7 +96,7 @@ class SparseCov:
         """Return the dense covariance (i.e., multiply and add terms)."""
         if self.diff_is_diag:
             diff_mat = np.zeros(
-                (self.n_bls, self.n_grp*self.n_eig), dtype=float
+                (2*self.n_bls, self.n_grp*self.n_eig), dtype=float
             )
             for grp in range(self.n_grp):
                 start, stop = 2 * self.edges[grp:grp+2]
@@ -105,9 +105,8 @@ class SparseCov:
         else:
             diff_mat = self.diff_mat
 
-        cov = (
-            self.src_mat @ self.src_mat.T.conj() + diff_mat @ diff_mat.T.conj()
-        )
+        cov = self.src_mat @ self.src_mat.T + diff_mat @ diff_mat.T
+
         if self.isinv:
             return np.diag(self.noise) - cov
         return np.diag(self.noise) + cov
@@ -187,21 +186,17 @@ class SparseCov:
         )
         if Cinv.isinv:
             tmp = Cinv.noise[:,None]*self.src_mat - tmp
-            small_inv = np.eye(self.n_src).astype(complex) + (
-                self.src_mat.T.conj() @ tmp
-            )
+            small_inv = np.eye(self.n_src) + self.src_mat.T @ tmp
         else:
             tmp = Cinv.noise[:,None]*self.src_mat + tmp
-            small_inv = np.eye(self.n_src).astype(complex) - (
-                self.src_mat.T.conj() @ tmp
-            )
+            small_inv = np.eye(self.n_src) - self.src_mat.T @ tmp
 
         small_inv = np.linalg.cholesky(small_inv)
         if return_det:
             logdet += np.log(np.diag(small_inv)).sum()
 
         small_inv = np.linalg.inv(small_inv)
-        Cinv.src_mat = tmp @ small_inv.T.conj()
+        Cinv.src_mat = tmp @ small_inv.T
         if return_det:
             return Cinv, np.real(logdet)
         return Cinv
