@@ -148,7 +148,7 @@ def mult_diff_mats(
     """
     n_bl, n_eig = inv_diff_mat.shape
     n_grp = edges.size - 1
-    out = np.zeros((n_grp, n_eig, n_eig), dtype=complex)
+    out = np.zeros((n_grp, n_eig, n_eig), dtype=float)
     _cfuncs.mult_diff_mats(
         diff_mat_H.ctypes.data,
         inv_diff_mat.ctypes.data,
@@ -175,10 +175,10 @@ def mult_src_by_blocks(
     ----------
     blocks_H
         Hermitian conjugate of the "inverse" diffuse matrix. This should be
-        an array of douple precision complex numbers.
+        an array of double precision floats.
     src_mat
         Source matrix, sorted by redundant groups. This should be an array of
-        double precision complex numbers.
+        double precision floats.
     edges
         Array specifying the edges of each redundant group. The array should
         consist of 64-bit integers.
@@ -186,14 +186,14 @@ def mult_src_by_blocks(
     Returns
     -------
     out
-        Product of the Hermitian conjugate of the "inverse" diffuse matrix and
-        the source matrix.
+        Product of the transpose of the "inverse" diffuse matrix and the
+        source matrix.
     """
     n_eig = blocks_H.shape[0]
     n_grp = edges.size - 1
     n_bl = edges[-1]
     n_src = src_mat.shape[-1]
-    out = np.zeros((n_eig*n_grp, n_src), dtype=complex)
+    out = np.zeros((n_eig*n_grp, n_src), dtype=float)
     _cfuncs.mult_src_by_blocks(
         blocks_H.ctypes.data,
         src_mat.ctypes.data,
@@ -234,7 +234,7 @@ def mult_src_blocks_by_diffuse(inv_diff_mat, src_blocks, edges):
     n_src = src_blocks.shape[-1]
     n_grp = edges.size - 1
     n_bls, n_eig = inv_diff_mat.shape
-    out = np.zeros((n_bls, n_src), dtype=complex)
+    out = np.zeros((n_bls, n_src), dtype=float)
     _cfuncs.mult_src_blocks_by_diffuse(
         inv_diff_mat.ctypes.data,
         src_blocks.ctypes.data,

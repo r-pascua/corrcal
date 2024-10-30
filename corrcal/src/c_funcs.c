@@ -274,7 +274,6 @@ void mult_diff_mats(
 }
 
 
-// TODO: potentially delete?
 void mult_src_by_blocks(
     double *blocks_H, double *src_mat, double *out, long *edges,
     int n_bl, int n_src, int n_eig, int n_grp
@@ -336,7 +335,6 @@ void mult_src_by_blocks(
 }
 
 
-// TODO: potentially delete?
 void mult_src_blocks_by_diffuse(
     double *inv_diff_mat, double *src_blocks, double *out, long *edges,
     int n_src, int n_eig, int n_grp
@@ -347,7 +345,7 @@ void mult_src_blocks_by_diffuse(
      *  Parameters
      *  ----------
      *  inv_diff_mat
-     *      "Inverse" of the diffuse matrix, with shape (n_bl, n_eig).
+     *      "Inverse" of the diffuse matrix, with shape (2*n_bl, n_eig).
      *  src_blocks
      *      Product of the Hermitian conjugate of the "inverse" diffuse
      *      matrix and the source matrix, with shape (n_eig, n_src).
