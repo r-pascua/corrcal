@@ -1,7 +1,7 @@
 struct sparse_cov{
-    complex *noise;
-    complex *diff_mat;
-    complex *src_mat;
+    double *noise;
+    double *diff_mat;
+    double *src_mat;
     int n_bl;
     int n_eig;
     int n_src;
@@ -11,9 +11,9 @@ struct sparse_cov{
 };
 
 struct sparse_cov *init_cov(
-    complex *noise,
-    complex *diff_mat,
-    complex *src_mat,
+    double *noise,
+    double *diff_mat,
+    double *src_mat,
     int n_bl,
     int n_eig,
     int n_src,
