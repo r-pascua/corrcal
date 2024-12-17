@@ -140,7 +140,7 @@ def make_small_blocks(
     """
     n_eig = diff_mat.shape[-1]
     n_grp = edges.size - 1
-    out = np.zeros((n_grp, n_eig, n_eig), dtype=complex)
+    out = np.zeros((n_grp, n_eig, n_eig), dtype=float)
     _cfuncs.make_all_small_blocks(
         noise_diag.ctypes.data,
         diff_mat.ctypes.data,

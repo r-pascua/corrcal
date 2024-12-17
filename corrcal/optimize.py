@@ -277,7 +277,7 @@ def nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.inf):
 
     # Use a Gaussian prior that the average phase should be nearly zero
     phases = np.arctan2(gains[1::2], gains[::2])
-    phs_norm = np.sum(phases)**2 / phs_norm_fac**2
+    phs_norm = np.mean(phases)**2 / phs_norm_fac**2
     return np.real(chisq) + logdet + phs_norm
 
 
@@ -301,13 +301,14 @@ def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.
     cinv.apply_gains(gains/scale, ant_1_inds, ant_2_inds)
     cinv = cinv.inv(return_det=False)
     p = cinv @ data
+    noise = cov.noise
     cov = cov.copy()
     cov.noise = np.zeros_like(cov.noise)
     
-    # Compute p = (C-N) @ G^T @ p.
+    # Compute q = (C-N) @ G.T @ p.
     q = p.copy()
-    q[::2] = gain_mat.real * p[::2] + gain_mat.imag * p[1::2]
-    q[1::2] = gain_mat.imag * p[::2] - gain_mat.real * p[1::2]
+    q[::2] = gain_mat.real*p[::2] + gain_mat.imag*p[1::2]
+    q[1::2] = -gain_mat.imag*p[::2] + gain_mat.real*p[1::2]
     q = cov @ q
 
     # Now compute s = Re(q^\dag @ p), t = Im(q^\dag @ p).
@@ -322,14 +323,14 @@ def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.
     )
 
     gradient = accumulate_gradient(
-        gains, s, t, inv_power, ant_1_inds, ant_2_inds
+        gains, s, t, inv_power, noise, ant_1_inds, ant_2_inds
     )
 
     # Accumulate the contributions from the phase normalization.
     amps = np.sqrt(gains[::2]**2 + gains[1::2]**2)
     phases = np.arctan2(gains[1::2], gains[::2])
     n_ants = complex_gains.size
-    grad_phs_prefac = 2 * phases / (n_ants * phs_norm_fac**2)
+    grad_phs_prefac = 2 * np.sum(phases) / (amps * phs_norm_fac**2)
     gradient[::2] -= grad_phs_prefac * np.sin(phases)
     gradient[1::2] += grad_phs_prefac * np.cos(phases)
 
@@ -363,7 +364,7 @@ def accumulate_gradient(gains, s, t, P, noise, ant_1_inds, ant_2_inds):
         Gk = gain_mat[k]
         Gsq = np.abs(Gk) ** 2
         sig = noise[::2][k]
-        prefac = 2*(1 - Gsq)/Gsq - P[k]*sig
+        prefac = sig * P[k] / Gsq
         gradient[::2][k1] += prefac * (
             Gk.real*gains[::2][k2] - Gk.imag*gains[1::2][k2]
         )

@@ -183,13 +183,18 @@ class SparseCov:
         Cinv.diff_mat = linalg.block_multiply(tmp, small_inv, self.edges)
 
         # Now invert the source matrix.
+        # First, compute Delta'.T @ Sigma.
         tmp = linalg.mult_src_by_blocks(
-            Cinv.diff_mat.T.conj(), self.src_mat, self.edges
+            Cinv.diff_mat.T.copy(), self.src_mat, self.edges
         )
 
+        # Next, compute Delta' @ Delta'.T @ Sigma.
         tmp = linalg.mult_src_blocks_by_diffuse(
             Cinv.diff_mat, tmp, self.edges
         )
+
+        # Then include the noise to construct \tilde{C}^{-1} @ Sigma,
+        # and finish the small matrix 1 \pm Sigma.T @ \tilde{C}^{-1} @ Sigma.
         if Cinv.isinv:
             tmp = Cinv.noise[:,None]*self.src_mat - tmp
             small_inv = np.eye(self.n_src) + self.src_mat.T @ tmp
@@ -197,14 +202,17 @@ class SparseCov:
             tmp = Cinv.noise[:,None]*self.src_mat + tmp
             small_inv = np.eye(self.n_src) - self.src_mat.T @ tmp
 
+        # Now Cholesky and accumulate determinant if requested.
         small_inv = np.linalg.cholesky(small_inv)
         if return_det:
             logdet += np.log(np.diag(small_inv)).sum()
 
+        # Finally, invert then compute Sigma'.
+        # At this point, tmp = \tilde{C}^{-1} @ Sigma.
         small_inv = np.linalg.inv(small_inv)
         Cinv.src_mat = tmp @ small_inv.T
         if return_det:
-            return Cinv, np.real(logdet)
+            return Cinv, 2*np.real(logdet)
         return Cinv
         
 

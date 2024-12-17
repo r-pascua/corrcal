@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <omp.h>
-#include <double.h>
+#include <complex.h>
 #include <math.h>
 #include "c_funcs.h"
 
@@ -318,19 +318,17 @@ void mult_src_by_blocks(
      *  slide 49.)
      */
     for (int grp=0; grp<n_grp; grp++) {
-        for (int src=0; src<n_src; src++) {
-            mymatmul(
-                blocks_H+edges[grp],
-                src_mat+src+edges[grp]*n_src,
-                out+src+grp*n_eig*n_src,
-                n_bl,
-                n_src,
-                n_src,
-                n_eig,
-                1,
-                edges[grp+1]-edges[grp]
-            );
-        }
+        mymatmul(
+            blocks_H+edges[grp],
+            src_mat+edges[grp]*n_src,
+            out+grp*n_eig*n_src,
+            n_bl,
+            n_src,
+            n_src,
+            n_eig,
+            n_src,
+            edges[grp+1]-edges[grp]
+        );
     }
 }
 
@@ -362,19 +360,17 @@ void mult_src_blocks_by_diffuse(
      *      Number of redundant groups.
      */
     for (int grp=0; grp<n_grp; grp++) {
-        for (int src=0; src<n_src; src++) {
-            mymatmul(
-                inv_diff_mat+edges[grp]*n_eig,
-                src_blocks+src+grp*n_eig*n_src,
-                out+edges[grp]*n_src+src,
-                n_eig,
-                n_src,
-                n_src,
-                edges[grp+1]-edges[grp],
-                1,
-                n_eig
-            );
-        }
+        mymatmul(
+            inv_diff_mat+edges[grp]*n_eig,
+            src_blocks+grp*n_eig*n_src,
+            out+edges[grp]*n_src,
+            n_eig,
+            n_src,
+            n_src,
+            edges[grp+1]-edges[grp],
+            n_src,
+            n_eig
+        );
     }
 }
 

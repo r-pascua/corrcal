@@ -240,9 +240,9 @@ def mult_src_blocks_by_diffuse(inv_diff_mat, src_blocks, edges):
         src_blocks.ctypes.data,
         out.ctypes.data,
         edges.ctypes.data,
-        n_src,
-        n_eig,
-        n_grp,
+        int(n_src),
+        int(n_eig),
+        int(n_grp),
     )
     return out
 
