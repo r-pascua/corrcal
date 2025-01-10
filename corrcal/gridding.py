@@ -191,9 +191,9 @@ def group_by_redundancy(
     # Next, conjugate antennas and data where appropriate.
 
 
-def make_groups_from_uvdata(uvdata, min_bl_length=0, min_group_size=1):
+def make_groups_from_uvdata(uvdata, min_bl_length=0, min_group_size=1, tol=1.0):
     """TODO: write doc"""
-    reds, _, lens, conj = uvdata.get_redundancies(include_conjugates=True)
+    reds, _, lens, conj = uvdata.get_redundancies(include_conjugates=True, tol=tol)
     conj = set(conj)
     ant_1_array = []
     ant_2_array = []
@@ -212,7 +212,7 @@ def make_groups_from_uvdata(uvdata, min_bl_length=0, min_group_size=1):
         edges.append(idx)
     ant_1_array = np.array(ant_1_array)
     ant_2_array = np.array(ant_2_array)
-    edges = np.array(edges)
+    edges = 2*np.array(edges)  # Since the data is split into re/im components
     return ant_1_array, ant_2_array, edges
 
 
