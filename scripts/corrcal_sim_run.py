@@ -15,11 +15,13 @@ import healpy
 import hera_sim
 import numpy as np
 import sys
-import vis_cpu
+import matvis
 import yaml
 
 from astropy import constants, units
-from astropy.coordinates import Longitude, Latitude
+from astropy.coordinates import Latitude, Longitude, AltAz
+from astropy.coordinates import EarthLocation, SkyCoord
+from astropy.time import Time
 from pathlib import Path
 from pyradiosky import SkyModel
 from pyuvdata import UVBeam
@@ -54,7 +56,7 @@ parser.add_argument(
 parser.add_argument(
     "--maxiter",
     type=int,
-    default=1000,
+    default=300,
     help="Maximum number of iterations to let the solver run.",
 )
 parser.add_argument(
@@ -89,8 +91,14 @@ if __name__ == "__main__":
         sep_e = 6.5
         sep_n = 9
         array_layout = {}
+        # Hard-code 8x8 grid for now.
+        n_rows = 8
+        n_cols = 8
         ant = 0
-        raise NotImplementedError("too tired")
+        for row in range(n_rows):
+            for col in range(n_cols):
+                array_layout[ant] = np.array([row*sep_e, col*sep_n, 0])
+                ant += 1
     elif isinstance(array_layout, str):
         raise ValueError("Array is unknown.")
     else:
@@ -102,6 +110,7 @@ if __name__ == "__main__":
     ideal_array = {ant: np.array(pos) for ant, pos in array_layout.items()}
 
     # Extract other information from the config file.
+    # TODO: more general beam support
     beam = AnalyticBeam(config.get("beam", "airy"), diameter=diameter)
     beam_ids = [0,] * len(array_layout)
     freq = config.get("freq", 150e6)
@@ -113,10 +122,9 @@ if __name__ == "__main__":
     # Add jitter to antenna positions if requested
     jitter = config.get("jitter", 0)
     if jitter > 0:
-        wavelength = constants.c.si.value / freq
         for ant, pos in array_layout.items():
-            dpos = np.random.normal(loc=0, scale=jitter*wavelength, size=3)
-            dpos[-1] = 0
+            dpos = np.random.normal(loc=0, scale=jitter*diameter, size=3)
+            dpos[-1] = 0  # Only perturb in EW/NS directions.
             array_layout[ant] = pos + dpos
 
     # Make the UVData object.
@@ -167,7 +175,7 @@ if __name__ == "__main__":
     )
     simulation = hera_sim.visibilities.VisibilitySimulation(
         data_model=data_model,
-        simulator=hera_sim.visibilities.VisCPU(),
+        simulator=hera_sim.visibilities.MatVis(),
     )
     simulation.simulate()
 
@@ -193,6 +201,12 @@ if __name__ == "__main__":
         hpx_inds=np.arange(Tsky.size),
         freq_array=np.array([freq]) * units.Hz,
     )
+
+    # Convert the sky temperature map into Janskys.
+    diff_model.kelvin_to_jansky()
+    Tsky = diff_model.stokes[0,0].value
+    
+    # Now actually simulate the visibilities.
     data_model = hera_sim.visibilities.ModelData(
         uvdata=diff_uvdata,
         sky_model=diff_model,
@@ -201,16 +215,13 @@ if __name__ == "__main__":
     )
     simulation = hera_sim.visibilities.VisibilitySimulation(
         data_model=data_model,
-        simulator=hera_sim.visibilities.VisCPU(),
+        simulator=hera_sim.visibilities.MatVis(),
     )
     simulation.simulate()
 
     # Sum the data together.
     uvdata.data_array += diff_uvdata.data_array
 
-    # Convert the sky temperature map into Janskys.
-    diff_model.kelvin_to_jansky()
-    Tsky = diff_model.stokes[0,0].value
 
     # Delete things we won't need anymore.
     del data_model, diff_model, diff_uvdata, src_model, simulation, stokes
@@ -237,52 +248,60 @@ if __name__ == "__main__":
     beam.efield_to_power()
     enu_antpos = uvdata.get_ENU_antpos()[0]
     za, az = healpy.pix2ang(nside, np.arange(healpy.nside2npix(nside)))
+
+    # Construct the AltAz frame for coordinate transformations.
+    observatory = EarthLocation(longitude, latitude, altitude)
+    local_frame = AltAz(location=observatory, obstime=Time(obstime, format="jd"))
     
     if args.flat_sky:
-        from astropy.coordinates import Latitude, Longitude, AltAz
-        from astropy.coordinates import EarthLocation, SkyCoord
-        from astropy.time import Time
         from astropy_healpix import HEALPix
-
-        # Construct the AltAz frame for coordinate transformations.
-        observatory = EarthLocation(longitude, latitude, altitude)
-        altaz = AltAz(location=observatory, obstime=Time(obstime, format="jd"))
 
         # Prepare the direction cosine grid.
         uvws = freq * (
             enu_antpos[ant_2_array] - enu_antpos[ant_1_array]
         ) / constants.c.si.value
-        umax = np.linalg.norm(uvws, axis=1).max()
-        dl = 1 / (4*umax)
-        n_l = int(2 // dl)
+        u_max = np.linalg.norm(uvws, axis=1).max()
+        n_l = int(8 * u_max)
         if n_l % 2 == 0:
             n_l += 1  # Ensure we get (l,m) = (0,0)
         lm_grid = np.linspace(-1, 1, n_l)
+        LM = np.array(np.meshgrid(lm_grid, lm_grid))
         measure = np.diff(lm_grid)[0] ** 2
 
         # Put the beam and sky onto the (l,m) grid.
-        gridded_beam = np.zeros((n_l, n_l), dtype=complex)
+        gridded_beam = np.zeros((n_l, n_l), dtype=float)
         flat_Tsky = np.zeros(gridded_beam.shape, dtype=float)
         hpx_grid = HEALPix(nside=nside, order="ring", frame="icrs")
         for row, m in enumerate(lm_grid):
+            # Choose only pixels that are above the horizon.
             lmag = np.sqrt(m**2 + lm_grid**2)
-            select = lmag < 1
+            select = lmag < 1 - 1e-2  # Buffer to avoid small divide issues.
             if select.sum() == 0:
                 continue
+
+            # Compute the azimuth and zenith angle for each point.
             indices = np.argwhere(select).flatten()
             za = np.arcsin(lmag[select])
             az = np.arctan2(m, lm_grid[select])
-            gridded_beam[row,select] = beam.interp(
+
+            # Evaluate the beam at each sky pixel.
+            beam_vals = beam.interp(
                 az_array=az, za_array=za, freq_array=np.array([freq])
             )[0][0,0]
+            if beam_vals.ndim == 3:
+                # Safeguard for different versions of pyuvsim.
+                beam_vals = beam_vals[0,0]
+            gridded_beam[row,select] = beam_vals
+
+            # Interpolate the sky onto the image plane.
             coords = SkyCoord(
                 Longitude(np.pi/2 - az, unit="rad"),  # astropy uses E of N
                 Latitude(np.pi/2 - za, unit="rad"),
-                frame=altaz,
+                frame=local_frame,
             ).transform_to("icrs")
             flat_Tsky[row,select] = hpx_grid.interpolate_bilinear_skycoord(
                 coords, Tsky
-            ) / np.sqrt(1 - lmag[select]**2)
+            ) / np.sqrt(1 - lmag[select]**2)  # Apply flat sky projection.
 
         sky_pspec = np.abs(
             np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(flat_Tsky * measure)))
@@ -290,12 +309,11 @@ if __name__ == "__main__":
 
         # Now compute the diffuse matrix.
         n_eig = config["n_eig"]
-        LM = np.array(np.meshgrid(lm_grid, lm_grid))
-        diff_mat = np.zeros((edges[-1], n_eig), dtype=complex)
+        diff_mat = np.zeros((edges[-1], 2*n_eig), dtype=float)
         for grp, (start, stop) in enumerate(zip(edges, edges[1:])):
             if (jitter == 0) and (n_eig == 1):
                 fringe = np.exp(
-                    -2j * np.pi * np.einsum("i,ilm->lm", uvws[start,:2], LM)
+                    -2j * np.pi * np.einsum("i,ilm->lm", uvws[start//2,:2], LM)
                 )
                 kernel = np.abs(
                     np.fft.fftshift(
@@ -304,13 +322,13 @@ if __name__ == "__main__":
                         )
                     )
                 ) ** 2
-                diff_mat[start:stop,0] = np.sqrt(
-                    measure * np.sum(sky_pspec * kernel)
-                )
+                block = np.sqrt(measure * np.sum(sky_pspec * kernel))
+                diff_mat[start:stop,0][::2] = 0.5 * block
+                diff_mat[start:stop,1][1::2] = 0.5 * block
             else:
                 fringe = np.exp(
                     -2j * np.pi * np.einsum(
-                        "bi,ilm->blm", uvws[start:stop,:2], LM
+                        "bi,ilm->blm", uvws[start//2:stop//2,:2], LM
                     )
                 )
                 kernel = np.fft.fftshift(
@@ -325,13 +343,13 @@ if __name__ == "__main__":
                 )
 
                 # Compute the eigenvalues/vectors for this block.
-                eigvals, eigvecs = np.linalg.eigh(block, "U")
+                eigvals, eigvecs = np.linalg.eigh(block)
                 if eigvals[0] < eigvals[-1]:
                     eigvals = eigvals[::-1]
                     eigvecs = eigvecs[:,::-1]
-                diff_mat[start:stop] = eigvecs[:,:n_eig] * np.sqrt(
-                    eigvals[None,:n_eig]
-                )
+                block = np.sqrt(eigvals[None,:n_eig]) * eigvecs[:,:n_eig]
+                diff_mat[start:stop,::2][::2] = 0.5 * block.real
+                diff_mat[start:stop,1::2][1::2] = 0.5 * block.real
 
         del fringe, flat_Tsky, sky_pspec, kernel, gridded_beam, uvws
     else:
@@ -361,7 +379,7 @@ if __name__ == "__main__":
         sky_crd = np.array(
             [np.sin(za)*np.cos(az), np.sin(za)*np.sin(az), np.cos(za)]
         )  # Unit vector pointing to each pixel on the sky.
-        rotation = vis_cpu.conversions.enu_to_eci_matrix(lst, latitude)
+        rotation = matvis.conversions.enu_to_eci_matrix(lst, latitude)
         ecef_antpos = (rotation @ enu_antpos.T).T
         uvws = freq * (
             ecef_antpos[ant_2_array] - ecef_antpos[ant_1_array]
@@ -420,61 +438,84 @@ if __name__ == "__main__":
 
         del fringe, uvws, sky_crd
 
-    # Compute source matrix. First, figure out "local" source positions.
-    src_xyz = vis_cpu.conversions.point_source_crd_eq(ra, dec)
-    rotation = vis_cpu.conversions.eci_to_enu_matrix(0, latitude)
-    src_enu = rotation @ src_xyz
-    az, za = vis_cpu.conversions.enu_to_az_za(
-        src_enu[0], src_enu[1], orientation="uvbeam"
-    )
+    # Compute source matrix. First, figure out local source positions.
+    source_positions = SkyCoord(
+        Longitude(ra*units.rad), Latitude(dec*units.rad), frame="icrs"
+    ).transform_to(local_frame)
 
-    # Now make a horizon cut.
-    above_horizon = za < np.pi/2
-    if above_horizon.sum() < above_horizon.size:
-        az = az[above_horizon]
-        za = za[above_horizon]
-        src_enu = src_enu[:,above_horizon]
-        fluxes = fluxes[above_horizon]
-        ra = ra[above_horizon]
-        dec = dec[above_horizon]
+    # Now downselect to calibration candidates.
+    above_horizon = source_positions.alt > 0
+    near_zenith = source_positions.alt.deg > 80
+    is_bright = fluxes > 100  # Fluxes are assumed to be in Jy.
+    select = near_zenith | (is_bright & above_horizon)
+    src_az = Longitude(
+        np.pi/2*units.rad - source_positions.az
+    )[select].to(units.rad).value
+    src_za = np.pi/2 - source_positions.alt.rad[select]
+    src_flux = fluxes[select]
 
     # Compute the beam at each source position.
-    uvws = freq * (
-        enu_antpos[ant_2_array] - enu_antpos[ant_1_array]
-    ) / constants.c.si.value
     src_beam_vals = beam.interp(
-        az_array=az,
-        za_array=za,
+        az_array=src_az,
+        za_array=src_za,
         freq_array=np.array([freq]),
     )[0][0,0,0]
+    if src_beam_vals.ndim == 2:
+        src_beam_vals = src_beam_vals[0]
 
-    # Now convert that to an observed flux with vis_cpu Stokes convention.
-    src_fluxes = 0.5 * fluxes * src_beam_vals
+    # Now convert that to an observed flux with matvis Stokes convention.
+    flux_err = np.random.normal(
+        loc=1, scale=config.get("flux_err", 0), size=src_flux.size
+    )
+    src_fluxes = 0.5 * src_flux * src_beam_vals * flux_err
 
     # Now figure out which sources to keep for calibration.
     n_src = config.get("n_src", 1)
     sort = np.argsort(src_fluxes)[::-1]  # Sort from highest to lowest flux.
-    select = sort[:n_src]
+    src_az = src_az[sort][:n_src]
+    src_za = src_za[sort][:n_src]
+    src_flux = src_fluxes[sort][:n_src]
 
     # Finally, actually compute the source matrix.
-    flux_err = np.random.normal(
-        loc=1, scale=config.get("flux_err", 0), size=n_src
+    uvws = freq * (
+        enu_antpos[ant_2_array] - enu_antpos[ant_1_array]
+    ) / constants.c.si.value
+    src_nhat = np.array(
+        [
+            np.sin(src_za)*np.cos(src_az),
+            np.sin(src_za)*np.sin(src_az),
+            np.cos(src_za),
+        ]
     )
-    phases = -2 * np.pi * uvws @ src_enu[:,select]
-    src_mat = (flux_err*src_fluxes[select])[None,:] * np.exp(1j * phases)
+    src_fringe = np.exp(-2j * np.pi * uvws @ src_nhat)
+    src_vis = src_flux[None,:] * src_fringe
+    src_mat = np.zeros((edges[-1], n_src), dtype=float)
+    src_mat[::2] = src_vis.real
+    src_mat[1::2] = src_vis.imag
 
-    # Simulate gains and generate initial guess.
+    # Simulate gains.
+    gain_amp = config.get("gain_amp", 1)
+    amp_jitter = config.get("amp_jitter", 0.1)
+    n_ants = len(array_layout)
+    gain_amplitudes = np.random.normal(
+        size=n_ants, loc=gain_amp, scale=amp_jitter
+    )
+    gain_phases = np.random.uniform(0, 2*np.pi, n_ants)
+    true_gains = gain_amplitudes * np.exp(1j*gain_phases)
+
+    # Generate initial guess.
     gain_amp_err = config.get("gain_amp_err", 0.05)
     gain_phs_err = config.get("gain_phs_err", 0.02)
-    n_ants = len(array_layout)
-    gain_amp = np.random.normal(loc=1, size=n_ants, scale=gain_amp_err)
-    gain_phs = np.random.normal(loc=0, size=n_ants, scale=gain_phs_err)
-    phases = np.random.uniform(0, 2*np.pi, n_ants)
-    true_gains = np.exp(1j * phases)
-    fit_gains = gain_amp * true_gains * np.exp(1j * gain_phs)
+    init_amp = gain_amplitudes * np.random.normal(
+        loc=1, size=n_ants, scale=gain_amp_err
+    )
+    init_phs = gain_phases + np.random.normal(
+        loc=0, size=n_ants, scale=gain_phs_err
+    )
+    init_gains = init_amp * np.exp(1j*init_phs)
     split_gains = np.zeros(2*n_ants, dtype=float)
-    split_gains[::2] = fit_gains.real
-    split_gains[1::2] = fit_gains.imag
+    split_gains[::2] = init_gains.real
+    split_gains[1::2] = init_gains.imag
 
     # Compute noise-related stuff. Anecdotally, SNR on the crosses is about
     # 5-20% of SNR on the autos. The SNR we're setting in the config is the
@@ -488,7 +529,7 @@ if __name__ == "__main__":
     omega_p = np.array([1])
     autocorr = uvdata.get_data(0, 0, "xx")
     noise_amp = np.abs(autocorr)[0,0] / snr
-    noise = np.ones(ant_1_array.size, dtype=complex) * noise_amp
+    noise = 0.5 * np.ones(2*ant_1_array.size, dtype=float) * noise_amp**2
 
     # Now initialize the sparse covariance.
     cov = corrcal.sparse.SparseCov(
@@ -496,11 +537,11 @@ if __name__ == "__main__":
         src_mat=src_mat,
         diff_mat=diff_mat,
         edges=edges,
-        n_eig=n_eig,
+        n_eig=2*n_eig,
         isinv=False,
     )
     gain_scale = 1
-    phs_norm = 0.1
+    phs_norm = 1
 
     # Initialize arrays for storing useful data and metadata.
     n_realizations = config.get("n_noise_realizations", 1)
@@ -541,10 +582,13 @@ if __name__ == "__main__":
         # Now let's keep track of the true visibilities, then apply gains.
         noisy_visibilities[i,:] = data.copy()
         data = data * true_gains[ant_1_array] * true_gains[ant_2_array].conj()
+        split_data = np.zeros(2*data.size, dtype=float)
+        split_data[::2] = data.real
+        split_data[1::2] = data.imag
         
         # Run the minimizer, and track how long it takes.
         opt_args = (
-            cov, data, ant_1_array, ant_2_array, gain_scale, phs_norm
+            cov, split_data, ant_1_array, ant_2_array, gain_scale, phs_norm
         )
         t1 = time()
         try:
@@ -582,7 +626,7 @@ if __name__ == "__main__":
         outdir / f"{basename}_results.npz",
         vis=noisy_visibilities,
         all_vis=all_visibilities,
-        init_gains=fit_gains,
+        init_gains=init_gains,
         true_gains=true_gains,
         gain_sols=gain_solutions,
         ant_1_array=ant_1_array,
