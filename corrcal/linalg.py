@@ -3,6 +3,7 @@ Module containing various linear algebra tools.
 """
 import numpy as np
 import ctypes
+import numba
 from . import _cfuncs
 from . import utils
 
@@ -276,4 +277,13 @@ def sparse_cov_times_vec(sparse_cov, vec):
         vec.ctypes.data,
         out.ctypes.data,
     )
+    return out
+
+@numba.njit
+def sum_diags(blocks):
+    """Helper function for computing determinant of covariance."""
+    out = 0
+    for b in numba.prange(blocks.shape[0]):
+        for e in range(blocks.shape[1]):
+            out += np.log(blocks[b,e,e])
     return out

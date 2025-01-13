@@ -171,9 +171,7 @@ class SparseCov:
 
         small_blocks = np.linalg.cholesky(small_blocks)
         if return_det:
-            logdet += sum(
-                np.log(np.diag(block)).sum() for block in small_blocks
-            )
+            logdet += linalg.sum_diags(small_blocks)
 
         # This is faster than using np.linalg.inv
         small_inv = linalg.tril_inv(small_blocks).transpose(0,2,1).conj()
