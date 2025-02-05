@@ -643,6 +643,86 @@ void make_all_small_blocks(
 }
 
 
+double sum_diags(
+    double *blocks, int n_grp, int n_eig
+) {
+    /*
+     *  void sum_diags(
+     *      double *blocks, double *out, int n_grp, int n_eig
+     *  )
+     *
+     *  Compute the contribution to logdetC from the small blocks.
+     *
+     *  Parameters
+     *  ----------
+     *  blocks
+     *      Cholesky decomposition of the small n_eig by n_eig blocks (i.e.,
+     *      L_\Delta in Eq. ??? from Pascua+ 2025).
+     *  n_grp
+     *      Number of redundant groups.
+     *  n_eig
+     *      Number of eigenmodes used to represent covariance in each group.
+     */
+    double out = 0;
+    int maxiter = n_grp*n_eig;
+    int block_size = n_eig*n_eig;
+
+    #pragma omp parallel for
+    for (int i=0; i<maxiter; i++){
+        grp = i / n_eig;
+        mode = i % n_eig;
+        out += log(blocks[grp*block_size+mode*n_eig+mode]);
+    }
+    return out;
+}
+
+
+void accumulate_gradient(
+    double *gains, double *s, double *t, double *P, double *noise,
+    double *out, long *ant_1_inds, long *ant_2_inds, int n_bl
+) {
+    /*
+     *  void accumulate_gradient(
+     *      double *gains, double *s, double *t, double *P, double *noise,
+     *      double *out, long *ant_1_inds, long *ant_2_inds, int n_bl
+     *  )
+     *
+     *  Accumulate the gradient of the likelihood antenna-by-antenna while
+     *  looping over baselines in the sum. Refer to Section ?? of Pascua+ 2025
+     *  for details on the gradient calculation.
+     *
+     *  gains are per antenna, alternating real/imag
+     *  s, t, P are all length Nbl, real-valued
+     *
+     */
+    #pragma omp parallel for
+    for (int k=0; k<n_bl; k++){
+        // Figure out which antennas are in this baseline.
+        k1 = ant_1_inds[k];
+        k2 = ant_2_inds[k];
+
+        // Accumulate the contribution from the chi-squared gradient.
+        out[2*k1] -= 2 * (gains[2*k2]*s[k] - gains[2*k2+1]*t[k]);
+        out[2*k2] -= 2 * (gains[2*k1]*s[k] + gains[2*k1+1]*t[k]);
+        out[2*k1+1] -= 2 * (gains[2*k2+1]*s[k] + gains[2*k2]*t[k]);
+        out[2*k2+1] -= 2 * (gains[2*k1+1]*s[k] - gains[2*k1]*t[k]);
+
+        // Compute the product of complex gains.
+        G_kr = gains[2*k1]*gains[2*k2] + gains[2*k1+1]*gains[2*k2+1];
+        G_ki = gains[2*k1+1]*gains[2*k2] - gains[2*k1]*gains[2*k2+1];
+
+        // Compute the prefactor for the trace contribution.
+        prefac = 2 * noise[2*k] * P[k] / (G_kr*G_kr + G_ki*G_ki);
+
+        // Now accumulate contributions from the trace.
+        out[2*k1] += prefac * (G_kr*gains[2*k2] - G_ki*gains[2*k2+1]);
+        out[2*k2] += prefac * (G_kr*gains[2*k1] + G_ki*gains[2*k1+1]);
+        out[2*k1+1] += prefac * (G_kr*gains[2*k2+1] + G_ki*gains[2*k2]);
+        out[2*k2+1] += prefac * (G_kr*gains[2*k1+1] - G_ki*gains[2*k1]);
+    }
+}
+
+
 void sparse_cov_times_vec(struct sparse_cov *cov, double *vec, double *out) {
     /*
      *  void sparse_cov_times_vec(
