@@ -669,8 +669,8 @@ double sum_diags(
 
     #pragma omp parallel for
     for (int i=0; i<maxiter; i++){
-        grp = i / n_eig;
-        mode = i % n_eig;
+        int grp = i / n_eig;
+        int mode = i % n_eig;
         out += log(blocks[grp*block_size+mode*n_eig+mode]);
     }
     return out;
@@ -698,8 +698,8 @@ void accumulate_gradient(
     #pragma omp parallel for
     for (int k=0; k<n_bl; k++){
         // Figure out which antennas are in this baseline.
-        k1 = ant_1_inds[k];
-        k2 = ant_2_inds[k];
+        int k1 = ant_1_inds[k];
+        int k2 = ant_2_inds[k];
 
         // Accumulate the contribution from the chi-squared gradient.
         out[2*k1] -= 2 * (gains[2*k2]*s[k] - gains[2*k2+1]*t[k]);
@@ -708,11 +708,11 @@ void accumulate_gradient(
         out[2*k2+1] -= 2 * (gains[2*k1+1]*s[k] - gains[2*k1]*t[k]);
 
         // Compute the product of complex gains.
-        G_kr = gains[2*k1]*gains[2*k2] + gains[2*k1+1]*gains[2*k2+1];
-        G_ki = gains[2*k1+1]*gains[2*k2] - gains[2*k1]*gains[2*k2+1];
+        double G_kr = gains[2*k1]*gains[2*k2] + gains[2*k1+1]*gains[2*k2+1];
+        double G_ki = gains[2*k1+1]*gains[2*k2] - gains[2*k1]*gains[2*k2+1];
 
         // Compute the prefactor for the trace contribution.
-        prefac = 2 * noise[2*k] * P[k] / (G_kr*G_kr + G_ki*G_ki);
+        double prefac = 2 * noise[2*k] * P[k] / (G_kr*G_kr + G_ki*G_ki);
 
         // Now accumulate contributions from the trace.
         out[2*k1] += prefac * (G_kr*gains[2*k2] - G_ki*gains[2*k2+1]);
