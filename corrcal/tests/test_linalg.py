@@ -52,3 +52,23 @@ def test_sum_diags(noise, diff_mat, edges):
     for block in blocks:
         logdet_blocks += 2 * np.log(np.diag(block)).sum()
     assert np.isclose(logdet_blocks, linalg.sum_diags(blocks))
+
+
+def test_mult_src_by_blocks(diff_mat, src_mat, edges, dense_diff_mat):
+    # Don't need to do all the extra crud done in the inversion routine.
+    # Just want to check that the product of a sparse diffuse matrix-like
+    # thing with the source matrix gives the right result.
+    expected_product = dense_diff_mat.T @ src_mat
+    sparse_product = linalg.mult_src_by_blocks(
+        diff_mat.T.copy(), src_mat, edges
+    )
+    assert np.allclose(expected_product, sparse_product)
+
+
+def test_mult_src_blocks_by_diffuse(diff_mat, src_mat, edges, dense_diff_mat):
+    # Same deal here, except for D@D.T@S
+    expected_product = dense_diff_mat @ dense_diff_mat.T @ src_mat
+    sparse_product = linalg.mult_src_blocks_by_diffuse(
+        diff_mat, dense_diff_mat.T @ src_mat, edges
+    )
+    assert np.allclose(sparse_product, expected_product)
