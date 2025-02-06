@@ -164,6 +164,7 @@ mult_src_blocks_by_diffuse.argtypes = [
     ct.c_int,  # Number of eigenmodes
     ct.c_int,  # Number of redundant groups
 ]
+
 # Make a sparse covariance structure
 init_cov = lib.init_cov
 init_cov.argtypes = [
@@ -176,6 +177,28 @@ init_cov.argtypes = [
     ct.c_int,  # Number of redundant groups
     ct.c_void_p,  # Redundant group edges
     ct.c_int,  # Whether the covariance is inverted
+]
+
+# Sum contributions to logdetC
+sum_diags = lib.sum_diags
+sum_diags.argtypes = [
+    ct.c_void_p,  # Array of small blocks L_\Delta
+    ct.c_int,  # Number of redundant groups
+    ct.c_int,  # Number of eigenmodes per group
+]
+
+# Accumulate trace + grad chisq
+accumulate_gradient = lib.accumulate_gradient
+accumulate_gradient.argtypes = [
+    ct.c_void_p,  # Per-antenna gains
+    ct.c_void_p,  # s vector (see function docs)
+    ct.c_void_p,  # t vector (see function docs)
+    ct.c_void_p,  # "Power" in the inverse covariance matrix
+    ct.c_void_p,  # Noise variance
+    ct.c_void_p,  # Where to write the gradient
+    ct.c_void_p,  # Index array for first antenna in each baseline
+    ct.c_void_p,  # Index array for second antenna in each baseline
+    ct.c_int,  # Number of baselines
 ]
 
 # Sparse matrix-vector multiplication

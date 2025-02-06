@@ -158,12 +158,14 @@ class SparseCov:
         Cinv.isinv = not self.isinv
         Cinv.noise = 1 / self.noise
         
-        # Calculate 1 + D^\dag G^\dag Ninv DG.
-        small_blocks = utils.make_small_blocks(
+        # Calculate 1 + D.T @ Ninv @ D; first the small blocks.
+        small_blocks = linalg.make_small_blocks(
             noise_diag=self.noise,
             diff_mat=self.diff_mat,
             edges=self.edges,
         )
+        
+        # Then add the identity and take the Cholesky decomposition.
         if Cinv.isinv:
             small_blocks = np.eye(self.n_eig)[None,...] + small_blocks
         else:

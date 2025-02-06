@@ -279,11 +279,52 @@ def sparse_cov_times_vec(sparse_cov, vec):
     )
     return out
 
-@numba.njit
+
+def make_small_blocks(
+    noise_diag: np.ndarray, diff_mat: np.ndarray, edges: np.ndarray
+):
+    """Make small blocks for use in inverting the diffuse matrix.
+
+    This routine calculates :math:`\Delta^\dag N^{-1} \Delta` for a diffuse
+    matrix that is block-diagonal. It is a thin wrapper around the C-code
+    that performs the actual computation.
+
+    Parameters
+    ----------
+    noise_diag
+        Diagonal of the noise variance matrix. The array should consist of
+        double precision floats.
+    diff_mat
+        Diffuse matrix sorted into redundant groups. The rows correspond to
+        different baselines (and this is the axis it is sorted along), while
+        the columns correspond to different eigenmodes. The array should
+        consist of double precision floats.
+    edges
+        Array specifying the edges of each redundant group. The array should
+        consist of 64-bit integers.
+
+    Returns
+    -------
+    small_blocks
+        Array containing the small blocks resulting from the matrix product.
+        The array is 3-dimensional; indexing along the zeroth-axis accesses
+        blocks for different redundant groups.
+    """
+    n_eig = diff_mat.shape[-1]
+    n_grp = edges.size - 1
+    out = np.zeros((n_grp, n_eig, n_eig), dtype=float)
+    _cfuncs.make_all_small_blocks(
+        noise_diag.ctypes.data,
+        diff_mat.ctypes.data,
+        out.ctypes.data,
+        edges.ctypes.data,
+        n_eig,
+        n_grp,
+    )
+    return out
+
+
 def sum_diags(blocks):
     """Helper function for computing determinant of covariance."""
-    out = 0
-    for b in numba.prange(blocks.shape[0]):
-        for e in range(blocks.shape[1]):
-            out += np.log(blocks[b,e,e])
-    return out
+    n_grps, n_eig = blocks.shape[:2]
+    return _cfuncs.sum_diags(blocks.ctypes.data, n_grps, n_eig)

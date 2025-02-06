@@ -311,7 +311,7 @@ def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.
     q[1::2] = -gain_mat.imag*p[::2] + gain_mat.real*p[1::2]
     q = cov @ q
 
-    # Now compute s = Re(q^\dag @ p), t = Im(q^\dag @ p).
+    # Now compute s = Re(q.conj() * p), t = Im(q.conj() * p).
     s = p[::2]*q[::2] + p[1::2]*q[1::2]
     t = p[1::2]*q[::2] - p[::2]*q[1::2]
 
@@ -330,161 +330,37 @@ def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.
     amps = np.sqrt(gains[::2]**2 + gains[1::2]**2)
     phases = np.arctan2(gains[1::2], gains[::2])
     n_ants = complex_gains.size
-    grad_phs_prefac = 2 * np.sum(phases) / (amps * phs_norm_fac**2)
+    grad_phs_prefac = 2 * np.sum(phases) / (amps * n_ants**2 * phs_norm_fac**2)
     gradient[::2] -= grad_phs_prefac * np.sin(phases)
     gradient[1::2] += grad_phs_prefac * np.cos(phases)
 
 
     return gradient / scale
 
-
-@numba.njit
 def accumulate_gradient(gains, s, t, P, noise, ant_1_inds, ant_2_inds):
-    """Loop over baselines and accumulate the gradient.
+    """Loop over baselines and accumulate the per-antenna gradient contribs.
 
-    TODO: add a reference for the math; for now it's in a Notion post,
-    but eventually it should be moved to CorrCal paper I.
-
-    Quick notes: s, t, P all have length Nbls
-    """
-    gradient = np.zeros_like(gains)
-    complex_gains = gains[::2] + 1j*gains[1::2]
-    gain_mat = complex_gains[ant_1_inds] * complex_gains[ant_2_inds].conj()
-
-    for k in numba.prange(ant_1_inds.size):
-        k1, k2 = ant_1_inds[k], ant_2_inds[k]
-
-        # Accumulate the contribution from the chi-squared gradient.
-        gradient[::2][k1] -= gains[::2][k2]*s[k] - gains[1::2][k2]*t[k]
-        gradient[::2][k2] -= gains[::2][k1]*s[k] + gains[1::2][k1]*t[k]
-        gradient[1::2][k1] -= gains[1::2][k2]*s[k] + gains[::2][k2]*t[k]
-        gradient[1::2][k2] -= gains[1::2][k1]*s[k] - gains[::2][k1]*t[k]
-
-        # Accumulate the contribution from the trace.
-        Gk = gain_mat[k]
-        Gsq = np.abs(Gk) ** 2
-        sig = noise[::2][k]
-        prefac = sig * P[k] / Gsq
-        gradient[::2][k1] += prefac * (
-            Gk.real*gains[::2][k2] - Gk.imag*gains[1::2][k2]
-        )
-        gradient[::2][k2] += prefac * (
-            Gk.real*gains[::2][k1] + Gk.imag*gains[1::2][k1]
-        )
-        gradient[1::2][k1] += prefac * (
-            Gk.real*gains[1::2][k2] + Gk.imag*gains[::2][k2]
-        )
-        gradient[1::2][k2] += prefac * (
-            Gk.real*gains[1::2][k1] - Gk.imag*gains[::2][k1]
-        )
-
-    return 2 * gradient
-
-def compute_trace(cov, inv_cov, gain_mat, grad_gain):
-    r"""Helper function for the gradient routine.
-
-    This function computes the trace of :math:`$C^{-1} \partial C$`. After
-    exploiting trace properties, we're left with the following quantities to
-    compute:
-
-    .. math::
-
-        \begin{align}
-            {\rm Tr}(N^{-1} \partial G \Delta \Delta^\dag G^\dag) &= \sum_{i,m}
-            N^{-1}_{ii} \partial G_{ii} G^{*}_{ii} |\Delta_{im}|^2, \\
-            
-            {\rm Tr}(N^{-1} \partial G \Sigma \Sigma^\dag G^\dag) &= \sum_{i,j}
-            N^{-1}_{ii} \partial G_{ii} G^{*}_{ii} |\Sigma_{ij}|^2, \\
-            
-            {\rm Tr}(\Delta' \Delta'^\dag \partial G \Delta \Delta^\dag
-            G^\dag) &= \sum_{m,n} (\Delta'^\dag \partial G \Delta)_{mn}
-            (\Delta^\dag G^\dag \Delta')_{nm}, \\
-
-            {\rm Tr}(\Sigma' \Sigma'^\dag \partial G \Sigma \Sigma^\dag
-            G^\dag) &= \sum_{i,j} (\Sigma'^\dag \partial G \Sigma)_{ij}
-            (\Sigma^\dag G^\dag \Sigma')_{ji}, \\
-
-            {\rm Tr}(\Delta' \Delta'^\dag \partial G \Sigma \Sigma^\dag
-            G^\dag) &= \sum_{m,j} (\Delta'^\dag \partial G \Sigma)_{mj}
-            (\Sigma^\dag G^\dag \Delta')_{jm}, \\
-
-            {\rm Tr}(\Sigma' \Sigma'^\dag \partial G \Delta \Delta^\dag
-            G^\dag) &= \sum_{j,m} (\Sigma'^\dag \partial G \Delta)_{jm}
-            (\Delta^\dag G^\dag \Sigma')_{mj},
-        \end{align}
-
-    where :math:`C^{-1} = N^{-1} - \Delta'\Delta'^\dag - \Sigma'\Sigma'^\dag`
-    (with the gains already applied prior to inversion), :math:`\Delta` is the
-    diffuse matrix, :math:`\Sigma` is the source matrix, :math:`N` is the noise
-    matrix, and :math:`G` is the gain matrix. The terms in the trace are
-    written this way to motivate how they can be computed efficiently: the
-    first two terms are straightforward to compute quickly; the other terms can
-    all be computed with C-routines that are minor modifications of routines
-    used in the inversion routine.
+    Thin wrapper around the accumulate_gradient C function.
 
     Parameters
     ----------
-    cov
-        Sparse covariance object.
-    inv_cov
-        Sparse inverse covariance object.
-    gain_mat
-        Diagonal of the gain matrix.
-    grad_gain
-        Diagonal of the derivative of the gain matrix.
+    TODO
 
     Returns
     -------
-    trace
-        Trace of the product of the inverse covariance and the derivative of
-        the covariance.
+    TODO
     """
-    # Compute the first two terms.
-    tmp = inv_cov.noise * gain_mat.conj() * grad_gain
-    trace = tmp @ np.sum(np.abs(cov.diff_mat)**2, axis=1)
-    trace += tmp @ np.sum(np.abs(cov.src_mat)**2, axis=1)
-
-    # Compute the auxiliary terms.
-    dG_Delta = grad_gain[:,None] * cov.diff_mat
-    dG_Sigma = grad_gain[:,None] * cov.src_mat
-    G_Delta = gain_mat[:,None] * cov.diff_mat
-    G_Sigma = gain_mat[:,None] * cov.src_mat
-
-    # TODO: write an alternate routine for computing the trace, but stick
-    # it in the gradient routine. Since the gradient is diagonal, we actually
-    # only need the diagonal entries from the (Nbl,Nbl) matrices in order to
-    # compute the trace. There should be a reasonably fast way of computing
-    # these--something that goes like O(Nbl*Neig**2) (i.e., same scaling as
-    # the likelihood evaluation)
-    # i.e. tr(dG D (D^\dag G^\dag D') D'^\dag)
-    # Compute the third term: tr(D'^\dag dG D D^\dag G^\dag D')
-    tmp = linalg.mult_diff_mats(
-        inv_cov.diff_mat.T.conj(), dG_Delta, cov.edges
+    gradient = np.zeros_like(gains)
+    n_bls = ant_1_inds.size
+    _cfuncs.accumulate_gradient(
+        gains.ctypes.data,
+        s.ctypes.data,
+        t.ctypes.data,
+        P.ctypes.data,
+        noise.ctypes.data,
+        gradient.ctypes.data,
+        ant_1_inds.ctypes.data,
+        ant_2_inds.ctypes.data,
+        n_bls,
     )
-    tmp2 = linalg.mult_diff_mats(G_Delta.T.conj(), inv_cov.diff_mat, cov.edges)
-    trace -= np.sum(tmp * tmp2.transpose(0,2,1))
-
-    # Compute the fourth term: tr(S'^\dag dG S S^\dag G^\dag S')
-    tmp = inv_cov.src_mat.T.conj() @ dG_Sigma
-    tmp2 = inv_cov.src_mat.T.conj() @ G_Sigma
-    trace -= np.sum(tmp * tmp2.conj())
-
-    # Compute the fifth term: tr(D'^\dag dG S S^\dag G^\dag D')
-    tmp = linalg.mult_src_by_blocks(
-        inv_cov.diff_mat.T.conj(), dG_Sigma, cov.edges
-    )
-    tmp2 = linalg.mult_src_by_blocks(
-        inv_cov.diff_mat.T.conj(), G_Sigma, cov.edges
-    ).conj()
-    trace -= np.sum(tmp * tmp2)
-
-    # Compute the last term: tr(D^\dag G^\dag S' S'^\dag dG D)
-    tmp = linalg.mult_src_by_blocks(
-        G_Delta.T.conj(), inv_cov.src_mat, cov.edges
-    )
-    tmp2 = linalg.mult_src_by_blocks(
-        dG_Delta.T.conj(), inv_cov.src_mat, cov.edges
-    ).conj()
-    trace -= np.sum(tmp * tmp2)
-
-    return 2 * trace.real
+    return gradient
