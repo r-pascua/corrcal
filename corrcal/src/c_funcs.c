@@ -664,16 +664,15 @@ double sum_diags(
      *      Number of eigenmodes used to represent covariance in each group.
      */
     double out = 0;
-    int maxiter = n_grp*n_eig;
     int block_size = n_eig*n_eig;
+    int maxiter = n_grp*block_size;
 
-    #pragma omp parallel for
-    for (int i=0; i<maxiter; i++){
-        int grp = i / n_eig;
-        int mode = i % n_eig;
-        out += log(blocks[grp*block_size+mode*n_eig+mode]);
+    for (int grp=0; grp<n_grp; grp++){
+            for (int mode=0; mode<n_eig; mode++){
+                out += log(blocks[grp*block_size+mode*n_eig+mode]);
+            }
     }
-    return out;
+    return 2*out;
 }
 
 

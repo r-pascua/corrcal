@@ -326,4 +326,4 @@ def make_small_blocks(
 def sum_diags(blocks):
     """Helper function for computing determinant of covariance."""
     n_grps, n_eig = blocks.shape[:2]
-    return _cfuncs.sum_diags(blocks.ctypes.data, n_grps, n_eig)
+    return _cfuncs.sum_diags(blocks.ctypes.data, int(n_grps), int(n_eig))

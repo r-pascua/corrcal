@@ -181,6 +181,7 @@ init_cov.argtypes = [
 
 # Sum contributions to logdetC
 sum_diags = lib.sum_diags
+sum_diags.restype = ct.c_double
 sum_diags.argtypes = [
     ct.c_void_p,  # Array of small blocks L_\Delta
     ct.c_int,  # Number of redundant groups
