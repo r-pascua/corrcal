@@ -72,17 +72,6 @@ def build_baseline_array(
     return antpos[ant_2_inds] - antpos[ant_1_inds]
 
 
-# TODO: rewrite these using the new SplitMat/SplitVec formalism
-def build_gain_mat(gains, ant_1_inds, ant_2_inds):
-    """Build the matrix of products of per-antenna gains."""
-    complex_gains = build_complex_gains(gains)
-    return complex_gains[ant_1_inds] * complex_gains[ant_2_inds].conj()
-
-
-def scale_cov_by_gains(cov, gain_mat):
-    return linalg.diagmul(gain_mat, linalg.diagmul(cov, gain_mat.conj()))
-
-
 def rephase_to_ant(gains, ant=0):
     """Rephase gains to a reference antenna."""
     if np.iscomplexobj(gains):

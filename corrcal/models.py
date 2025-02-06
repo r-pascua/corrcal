@@ -299,9 +299,3 @@ def _compute_diffuse_matrix_from_flat_sky(
         )
 
     return diff_mat
-
-
-def compute_source_matrix(
-   tmp 
-):
-    pass
