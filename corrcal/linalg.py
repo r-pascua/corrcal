@@ -123,44 +123,6 @@ def block_multiply(
     return out
     
 
-def mult_diff_mats(
-    diff_mat_H: np.ndarray, inv_diff_mat: np.ndarray, edges: np.ndarray
-):
-    r"""Helper function for trace computation.
-    
-    This routine calculates :math:`\Delta^\dag \Delta'` as part of the trace
-    computation routine.
-
-    Parameters
-    ----------
-    diff_mat_H
-        Hermitian conjugate of the diffuse matrix.
-    inv_diff_mat
-        "Inverse" of the diffuse matrix.
-    edges
-        Array specifying the edges of each redundant group.
-
-    Returns
-    -------
-    out
-        Product of the Hermitian conjugate of the diffuse matrix and the
-        "inverse" diffuse matrix.
-    """
-    n_bl, n_eig = inv_diff_mat.shape
-    n_grp = edges.size - 1
-    out = np.zeros((n_grp, n_eig, n_eig), dtype=float)
-    _cfuncs.mult_diff_mats(
-        diff_mat_H.ctypes.data,
-        inv_diff_mat.ctypes.data,
-        out.ctypes.data,
-        edges.ctypes.data,
-        n_bl,
-        n_eig,
-        n_grp,
-    )
-    return out
-
-
 def mult_src_by_blocks(
     blocks_H: np.ndarray, src_mat: np.ndarray, edges: np.ndarray
 ):
