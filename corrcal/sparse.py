@@ -176,7 +176,7 @@ class SparseCov:
             logdet += linalg.sum_diags(small_blocks)
 
         # This is faster than using np.linalg.inv
-        small_inv = linalg.tril_inv(small_blocks).transpose(0,2,1).conj()
+        small_inv = linalg.tril_inv(small_blocks).transpose(0,2,1).copy()
         
         # Calculate Ninv D L_D^{-1\dag}
         tmp = Cinv.noise[:,None] * self.diff_mat
