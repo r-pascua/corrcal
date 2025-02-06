@@ -35,5 +35,13 @@ def test_compute_inv_diff_mat(diff_mat, dense_diff_mat, noise, edges):
 def test_inv(cov):
     assert np.allclose(np.linalg.inv(cov.expand()), cov.inv().expand())
 
+
 def test_double_inversion(cov):
     assert np.allclose(cov.expand(), cov.inv().inv().expand())
+
+
+def test_logdet(cov):
+    sparse_logdet = cov.inv(return_det=True)[1]
+    L = np.linalg.cholesky(cov.expand())
+    dense_logdet = 2*np.log(np.diag(L)).sum() - np.log(cov.noise).sum()
+    assert np.isclose(dense_logdet, sparse_logdet)

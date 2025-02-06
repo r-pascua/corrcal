@@ -205,14 +205,14 @@ class SparseCov:
         # Now Cholesky and accumulate determinant if requested.
         small_inv = np.linalg.cholesky(small_inv)
         if return_det:
-            logdet += np.log(np.diag(small_inv)).sum()
+            logdet += 2 * np.log(np.diag(small_inv)).sum()
 
         # Finally, invert then compute Sigma'.
         # At this point, tmp = \tilde{C}^{-1} @ Sigma.
         small_inv = np.linalg.inv(small_inv)
         Cinv.src_mat = tmp @ small_inv.T
         if return_det:
-            return Cinv, 2*np.real(logdet)
+            return Cinv, logdet
         return Cinv
         
 
