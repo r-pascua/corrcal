@@ -1,6 +1,5 @@
 import numpy as np
 import warnings
-import numba
 
 from . import _cfuncs
 from . import linalg

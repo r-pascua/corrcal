@@ -3,7 +3,6 @@ Module containing various linear algebra tools.
 """
 import numpy as np
 import ctypes
-import numba
 from . import _cfuncs
 from . import utils
 
