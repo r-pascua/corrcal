@@ -694,7 +694,6 @@ void accumulate_gradient(
      *  s, t, P are all length Nbl, real-valued
      *
      */
-    #pragma omp parallel for
     for (int k=0; k<n_bl; k++){
         // Figure out which antennas are in this baseline.
         int k1 = ant_1_inds[k];
