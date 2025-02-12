@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 from corrcal import SparseCov
+from corrcal.gridding import make_groups_from_antpos
 
 @pytest.fixture
 def n_eig():
@@ -13,14 +14,67 @@ def n_src():
 
 
 @pytest.fixture
-def n_bl():
-    return 50
+def array_layout():
+    n_rows = 5
+    n_cols = 4
+    dx = 7
+    dy = 6
+    antpos = {}
+
+    ant = 0
+    for row in range(n_rows):
+        for col in range(n_cols):
+            antpos[ant] = np.array([dx*col, dy*row, 0])
+            ant += 1
+    return antpos
 
 
 @pytest.fixture
-def edges(n_bl):
-    _edges = np.unique(np.random.randint(1, n_bl-1, 8)).astype(int)
-    return 2*np.concatenate(([0,], _edges, [n_bl,]))
+def min_bl_len():
+    return 10
+
+
+@pytest.fixture
+def min_group_size():
+    return 4
+
+
+@pytest.fixture
+def ant_1_array(array_layout, min_bl_len, min_group_size):
+    return make_groups_from_antpos(
+        antpos=array_layout,
+        min_bl_len=min_bl_len,
+        min_group_size=min_group_size,
+    )[0]
+
+
+@pytest.fixture
+def ant_2_array(array_layout, min_bl_len, min_group_size):
+    return make_groups_from_antpos(
+        antpos=array_layout,
+        min_bl_len=min_bl_len,
+        min_group_size=min_group_size,
+    )[1]
+
+
+@pytest.fixture
+def edges(array_layout, min_bl_len, min_group_size):
+    return make_groups_from_antpos(
+        antpos=array_layout,
+        min_bl_len=min_bl_len,
+        min_group_size=min_group_size,
+    )[2]
+
+
+@pytest.fixture
+def bls(array_layout, ant_1_array, ant_2_array):
+    antpos = np.array(list(array_layout.values()))
+    return antpos[ant_2_array] - antpos[ant_1_array]
+
+
+@pytest.fixture
+def n_bl(ant_1_array):
+    return ant_1_array.size
 
 
 @pytest.fixture

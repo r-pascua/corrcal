@@ -149,83 +149,98 @@ def calc_reds_from_uvs(uv, tol=0.01):
     return reds
 
 
-def group_by_redundancy(
-    data, noise, uvws, ant1, ant2, tol=0.1, do_fof=True, bl_axis=0,
+def parse_reds(
+    reds,
+    bl_lens,
+    min_bl_len=0,
+    max_bl_len=np.inf,
+    min_group_size=1,
+    tol=1.0,
 ):
-    """Re-order the data, noise, and antenna arrays by redundancy.
-
-    Parameters
-    ----------
-        array
-            ``ndarray`` containing the data to be grouped by redundancy. Can be
-            any shape, but must have an axis over baselines.
-        uvws
-            ``ndarray`` containing the baseline vectors in units of
-            wavelengths. Must have shape (Nbls, Ndim), with Ndim either 2 or 3.
-        ant1
-            ``ndarray`` enumerating the
-
-
-    Returns
-    -------
-        < todo >
-    """
-    # Figure out how to sort the data.
-    u, v = uvws[:, :2].T
-    sorting_key, edges, is_conj = make_redundant_groups(u, v, tol, do_fof)
-
-    # First, handle the antennas.
-    ant1 = ant1[sorting_key]
-    ant2 = ant2[sorting_key]
-    swapped_ants = ant1[is_conj]
-    ant1[is_conj] = ant2[is_conj]
-    ant2[is_conj] = swapped_ants
-
-    # Next, handle the data and noise.
-    if np.iscomplex(data):
-        noise = noise[sorting_key]
-    else:
-        temp_noise = noise.copy()
-        _ = temp_noise.sum()  # Just to make flake8 not complain.
-
-    # Next, conjugate antennas and data where appropriate.
-
-
-def make_groups_from_uvdata(uvdata, min_bl_length=0, min_group_size=1, tol=1.0):
     """TODO: write doc"""
-    reds, _, lens, conj = uvdata.get_redundancies(include_conjugates=True, tol=tol)
-    conj = set(conj)
     ant_1_array = []
     ant_2_array = []
     edges = [0,]
     idx = 0
-    for group, bl_length in zip(reds, lens):
-        if (bl_length < min_bl_length) or (len(group) < min_group_size):
+    for group, bl_len in zip(reds, bl_lens):
+        bl_len_not_ok = (bl_len < min_bl_len) or (bl_len > max_bl_len)
+        if bl_len_not_ok or (len(group) < min_group_size):
             continue
-        for bl in group:
-            ai, aj = uvdata.baseline_to_antnums(bl)
-            if bl in conj:
-                ai, aj = aj, ai
+
+        for (ai, aj) in group:
             ant_1_array.append(ai)
             ant_2_array.append(aj)
             idx += 1
         edges.append(idx)
+
+    # Convert to numpy arrays and return the sorted arrays.
     ant_1_array = np.array(ant_1_array)
     ant_2_array = np.array(ant_2_array)
-    edges = 2*np.array(edges)  # Since the data is split into re/im components
+    edges = 2 * np.array(edges)  # Since the data is split into re/im components
     return ant_1_array, ant_2_array, edges
 
 
-def apply_sort(array, sort_key, is_conj):
-    """Sort the input array according to the sorting key. Conjugate as needed.
+def make_groups_from_uvdata(
+    uvdata, min_bl_len=0, max_bl_len=np.inf, min_group_size=1, tol=1.0
+):
+    """TODO: write doc"""
+    _reds, bl_vecs, bl_lens, _conj = uvdata.get_redundancies(
+        include_conjugates=True, tol=tol
+    )
+    conj = set(conj)
+    reds = []
+    for group, vec in zip(_reds, bl_vecs):
+        grp = []
+        for bl in group:
+            ai, aj = uvdata.baseline_to_antnums(bl)
+            if bl in conj:
+                ai, aj = aj, ai
+            grp.append((ai,aj))
+        if vec[0] < 0:  # Assert u > 0
+            grp = [(aj, ai) for ai, aj in grp]
+        reds.append(grp)
 
-    Parameters
-    ----------
-    array
-        ``ndarray`` to be sorted.
-    sort_key
-        ``ndarray`` providing the reordering to be applied to the input array.
-    is_conj
-        Boolean ``ndarray`` stating which entries need to be conjugated.
-    """
-    pass
+    return parse_reds(
+        reds=reds,
+        bl_lens=bl_lens,
+        min_bl_len=min_bl_len,
+        max_bl_len=max_bl_len,
+        min_group_size=min_group_size,
+        tol=tol,
+    )
+
+
+def make_groups_from_antpos(
+    antpos, min_bl_len=0, max_bl_len=np.inf, min_group_size=1, tol=1.0
+):
+    """TODO: write doc"""
+    antenna_numbers = np.array(list(antpos.keys()))
+    antenna_positions = np.array(list(antpos.values()))
+    try:
+        from pyuvdata.utils.redundancy import get_antenna_redundancies
+        from pyuvdata.utils import baseline_to_antnums
+        HAVE_PYUVDATA = True
+    except ImportError:
+        HAVE_PYUVDATA = False
+
+    if HAVE_PYUVDATA:
+        reds, _, bl_lens = get_antenna_redundancies(
+            antenna_numbers=antenna_numbers,
+            antenna_positions=antenna_positions,
+            tol=tol,
+        )  # Baselines in u > 0 convention with b_ij = x_j - x_i
+        reds = [
+            [baseline_to_antnums(bl, Nants_telescope=1000) for bl in grp]
+            for grp in reds
+        ]
+    else:
+        raise NotImplementedError
+        
+    return parse_reds(
+        reds=reds,
+        bl_lens=bl_lens,
+        min_bl_len=min_bl_len,
+        max_bl_len=max_bl_len,
+        min_group_size=min_group_size,
+        tol=tol,
+    )
