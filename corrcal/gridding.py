@@ -184,7 +184,7 @@ def make_groups_from_uvdata(
     uvdata, min_bl_len=0, max_bl_len=np.inf, min_group_size=1, tol=1.0
 ):
     """TODO: write doc"""
-    _reds, bl_vecs, bl_lens, _conj = uvdata.get_redundancies(
+    _reds, bl_vecs, bl_lens, conj = uvdata.get_redundancies(
         include_conjugates=True, tol=tol
     )
     conj = set(conj)
