@@ -92,7 +92,9 @@ def src_mat(n_bl, n_src):
 
 @pytest.fixture(scope="session")
 def noise(n_bl):
-    return np.abs(np.random.normal(size=2*n_bl))
+    _noise = np.abs(np.random.normal(size=2*n_bl))
+    _noise[1::2] = _noise[::2]
+    return _noise
 
 
 @pytest.fixture(scope="session")
