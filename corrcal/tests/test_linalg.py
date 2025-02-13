@@ -14,11 +14,14 @@ def test_make_small_blocks(noise, diff_mat, dense_diff_mat, edges, n_eig):
     assert np.allclose(blocks, small_blocks)
 
 
-def test_tril_inv(noise, diff_mat, edges):
+@pytest.mark.parametrize("ndim", [2,3])
+def test_tril_inv(noise, diff_mat, edges, ndim):
     blocks = np.eye(diff_mat.shape[1])[None,...] + linalg.make_small_blocks(
         noise_diag=noise, diff_mat=diff_mat, edges=edges
     )
     blocks = np.linalg.cholesky(blocks)
+    if ndim == 2:
+        blocks = blocks[0].copy()
     inv_blocks = np.linalg.inv(blocks)
     assert np.allclose(linalg.tril_inv(blocks), inv_blocks)
 
@@ -72,3 +75,17 @@ def test_mult_src_blocks_by_diffuse(diff_mat, src_mat, edges, dense_diff_mat):
         diff_mat, dense_diff_mat.T @ src_mat, edges
     )
     assert np.allclose(sparse_product, expected_product)
+
+
+@pytest.mark.parametrize("ndim", [2,3])
+def test_cholesky(ndim):
+    if ndim == 2:
+        mat = np.random.normal(size=(10,10))
+        mat = mat @ mat.T
+    else:
+        mat = np.random.normal(size=(5,10,10))
+        mat = mat @ mat.transpose(0,2,1)
+
+    L1 = np.linalg.cholesky(mat)
+    L2 = linalg.cholesky(mat)
+    assert np.allclose(L1, L2)
