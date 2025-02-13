@@ -6,13 +6,6 @@ import ctypes
 from . import _cfuncs
 from . import utils
 
-# no-ops to keep things from crashing on import
-def SplitVec(foo):
-    pass
-
-def SplitMat(foo):
-    pass
-
 def tril_inv(mat: np.ndarray):
     """Invert a lower triangular matrix.
 
