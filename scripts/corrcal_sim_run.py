@@ -25,7 +25,7 @@ from astropy.time import Time
 from pathlib import Path
 from pyradiosky import SkyModel
 from pyuvdata import UVBeam
-from pyuvsim import AnalyticBeam
+from pyuvdata.analytic_beam import AiryBeam
 from scipy.optimize import minimize
 from time import time
 
@@ -111,7 +111,7 @@ if __name__ == "__main__":
 
     # Extract other information from the config file.
     # TODO: more general beam support
-    beam = AnalyticBeam(config.get("beam", "airy"), diameter=diameter)
+    beam = AiryBeam(diameter=diameter)
     beam_ids = [0,] * len(array_layout)
     freq = config.get("freq", 150e6)
     obstime = config.get("obstime", 2459917.737631866)
@@ -241,11 +241,10 @@ if __name__ == "__main__":
     min_length = config.get("min_length", np.sqrt(2) * diameter)
     min_group_size = max(config.get("min_group_size", 5), config["n_eig"])
     ant_1_array, ant_2_array, edges = corrcal.gridding.make_groups_from_uvdata(
-        ideal_uvdata, min_bl_length=min_length, min_group_size=min_group_size
+        ideal_uvdata, min_bl_len=min_length, min_group_size=min_group_size
     )
 
     # Compute diffuse matrix. First, some auxiliary things.
-    beam.efield_to_power()
     enu_antpos = uvdata.get_ENU_antpos()[0]
     za, az = healpy.pix2ang(nside, np.arange(healpy.nside2npix(nside)))
 
@@ -285,7 +284,7 @@ if __name__ == "__main__":
             az = np.arctan2(m, lm_grid[select])
 
             # Evaluate the beam at each sky pixel.
-            beam_vals = beam.interp(
+            beam_vals = beam.power_eval(
                 az_array=az, za_array=za, freq_array=np.array([freq])
             )[0][0,0]
             if beam_vals.ndim == 3:
@@ -360,7 +359,7 @@ if __name__ == "__main__":
         )
 
         # Evaluate the beam at every pixel on the sky.
-        beam_vals = beam.interp(
+        beam_vals = beam.power_eval(
             az_array=Longitude((az - np.pi/2)*units.rad).value,
             za_array=za,
             freq_array=uvdata.freq_array.flatten(),
@@ -455,7 +454,7 @@ if __name__ == "__main__":
     src_flux = fluxes[select]
 
     # Compute the beam at each source position.
-    src_beam_vals = beam.interp(
+    src_beam_vals = beam.power_eval(
         az_array=src_az,
         za_array=src_za,
         freq_array=np.array([freq]),
