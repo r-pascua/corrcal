@@ -191,7 +191,7 @@ if __name__ == "__main__":
     # Rescale the power spectrum appropriately.
     # (Additional factor of 2 is fftvis Stokes convention.)
     K_to_Jy = 1 / hera_sim.utils.jansky_to_kelvin(freq/1e9, 1)
-    sky_pspec *= (K_to_Jy * rescaling.value / 2)**2
+    sky_pspec *= (K_to_Jy * rescaling / 2)**2
 
     # Prepare the diffuse sky model.
     stokes = np.zeros((4, 1, Tsky.size), dtype=float)
@@ -207,14 +207,14 @@ if __name__ == "__main__":
     )
 
     # Manually convert the diffuse model into a point source model.
-    diffuse_model.kelvin_to_jansky()
-    diffuse_model.stokes *= healpy.nside2pixarea(nside) * units.sr
+    diff_model.kelvin_to_jansky()
+    diff_model.stokes *= healpy.nside2pixarea(nside) * units.sr
     npix = healpy.nside2npix(nside)
     pix_dec, pix_ra = healpy.pix2ang(nside, np.arange(npix))
     pix_dec = np.pi/2 - pix_dec  # pix2ang outputs colatitude
-    diffuse_model = SkyModel(
+    diff_model = SkyModel(
         name=np.arange(npix).astype(str),
-        stokes=diffuse_model.stokes,
+        stokes=diff_model.stokes,
         ra=Longitude(pix_ra*units.rad),
         dec=Latitude(pix_dec*units.rad),
         spectral_type="flat",
@@ -261,14 +261,14 @@ if __name__ == "__main__":
         ideal_uvdata, min_bl_len=min_length, min_group_size=min_group_size
     )
 
+    # Compute diffuse matrix. First, some auxiliary things.
+    enu_antpos = uvdata.get_ENU_antpos()[0]
+    za, az = healpy.pix2ang(nside, np.arange(healpy.nside2npix(nside)))
+
     # Compute the uvws; apparently fftvis uses b_ij = x_i - x_j convention
     uvws = freq * (
         enu_antpos[ant_1_array] - enu_antpos[ant_2_array]
     ) / constants.c.si.value
-
-    # Compute diffuse matrix. First, some auxiliary things.
-    enu_antpos = uvdata.get_ENU_antpos()[0]
-    za, az = healpy.pix2ang(nside, np.arange(healpy.nside2npix(nside)))
 
     # Construct the AltAz frame for coordinate transformations.
     observatory = EarthLocation(longitude, latitude, altitude)
@@ -312,12 +312,12 @@ if __name__ == "__main__":
             # Compute amplitude of baseline deviations within the group.
             uvw_here = uvws[start//2:stop//2]
             uvw_diffs = uvw_here[:,None] - uvw_here[None]
-            uvw_diff_mags = np.linalg.norm(uvw_diffs, axis=2, keepdims=True)
+            uvw_diff_mags = np.linalg.norm(uvw_diffs, axis=2)
 
             # Get orientations of baseline differences.
             normed_uvw_diffs = uvw_diffs / np.where(
                 uvw_diff_mags > 0, uvw_diff_mags, 1
-            )
+            )[:,:,None]
             thetas = np.arccos(normed_uvw_diffs[:,:,2])[None,:,:]
             phis = np.arctan2(
                 normed_uvw_diffs[:,:,1], normed_uvw_diffs[:,:,0]
@@ -325,13 +325,13 @@ if __name__ == "__main__":
 
             # Compute the bandpower measured by this group.
             avg_uvw_mag = np.linalg.norm(uvw_here.mean(axis=0))
-            pspec_bessels = special.spherical_jn(sky_ells, 2*np.pi*avg_uvw_mag)
+            pspec_bessels = spherical_jn(sky_ells, 2*np.pi*avg_uvw_mag)
             band_power = 4 * np.pi * np.sum(
                 sky_pspec * pspec_bessels**2 * (2*sky_ells + 1)
             )
 
             # Now compute the covariance for this block.
-            bessels = spherical_jn(ells, 2*np.pi*uvw_diff_mags[None,:,:])
+            bessels = spherical_jn(ells, 2*np.pi*uvw_diff_mags)
             Ylms = sph_harm_y(ells, emms, thetas, phis)
             flm = 1j**ells * bessels * Ylms
             offset = np.sum(flm[zero_m] * Blm[zero_m], axis=0)
