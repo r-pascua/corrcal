@@ -8,6 +8,7 @@ from pyuvdata import UVBeam, UVData
 from pyradiosky import SkyModel
 from .covdata import UVCov
 from . import utils
+from scipy.special import spherical_jn, sph_harm_y
 
 
 def build_source_model(
@@ -193,109 +194,101 @@ def _compute_diffuse_matrix_from_harmonics(
 
 
 def _compute_diffuse_matrix_from_flat_sky(
-    Tsky,
+    sky_pspec,
     nside,
     beam,
-    telescope_location,
-    obstime,
     freq,
     enu_antpos,
     ant_1_array,
     ant_2_array,
     edges,
-    n_eig,
+    n_eig=1,
+    lmax=10,
+    pixwgt_datapath=None,
+    bl_convention="i-j",
 ):
-    from astropy.coordinates import Latitude, Longitude, AltAz
-    from astropy.coordinates import EarthLocation, SkyCoord
-    from astropy.time import Time
-    from astropy_healpix import HEALPix
-    import healpy
-
-    # TODO: insert a check that the beam is OK.
-    # Construct the AltAz frame for coordinate transformations.
-    observatory = EarthLocation(*telescope_location)
-    local_frame = AltAz(location=observatory, obstime=Time(obstime, format="jd"))
-
-    # Prepare the direction cosine grid.
-    uvws = freq * (
-        enu_antpos[ant_2_array] - enu_antpos[ant_1_array]
-    ) / constants.c.si.value
-    umax = np.linalg.norm(uvws, axis=1).max()
-    dl = 1 / (4*umax)
-    n_l = int(2 // dl)
-    if n_l % 2 == 0:
-        n_l += 1  # Ensure we get (l,m) = (0,0)
-    lm_grid = np.linspace(-1, 1, n_l)
-    measure = (lm_grid[1]-lm_grid[0]) ** 2
-
-    # Put the beam and sky onto the (l,m) grid.
-    gridded_beam = np.zeros((n_l, n_l), dtype=float)
-    flat_Tsky = np.zeros(gridded_beam.shape, dtype=float)
-    hpx_grid = HEALPix(nside=nside, order="ring", frame="icrs")
-    for row, m in enumerate(lm_grid):
-        # Figure out which sky positions are above the horizon.
-        lmag = np.sqrt(m**2 + lm_grid**2)
-        select = lmag < 1
-        if select.sum() == 0:
-            continue
-
-        # Compute the azimuth and zenith angle for each of these points.
-        indices = np.argwhere(select).flatten()
-        za = np.arcsin(lmag[select])
-        az = np.arctan2(m, lm_grid[select])
-
-        # Interpolate the beam.
-        beam_vals = beam.interp(
-            az_array=az, za_array=za, freq_array=np.array([freq])
+    """Compute the diffuse matrix assuming we can flat sky the integrals."""
+    # First, compute the sph. harm. coefficients for the beam-squared.
+    pixels = np.arange(healpy.nside2npix(nside))
+    theta, phi = healpy.pix2ang(nside, pixels)
+    hpx_bsq_vals = np.abs(
+        beam.power_eval(
+            az_array=phi,
+            za_array=theta,
+            freq_array=np.array([freq]),
         )[0][0,0]
-        if beam_vals.ndim == 3:
-            # For some versions of pyuvsim, this returns an array with shape
-            # (Nvispol, Nfreq, Npix); for now I'll be assuming that we want
-            # the XX polarization.
-            # TODO: Update this to correctly handle different polarizations
-            beam_vals = beam_vals[0,0]
-        gridded_beam[row,select] = beam_vals
-        
-        # Interpolate the sky intensity.
-        coords = SkyCoord(
-            Longitude(np.pi/2 - az, unit="rad"),  # astropy uses E of N
-            Latitude(np.pi/2 - za, unit="rad"),
-            frame=local_frame,
-        ).transform_to("icrs")
-        flat_Tsky[row,select] = hpx_grid.interpolate_bilinear_skycoord(
-            coords, Tsky
-        ) / np.sqrt(1 - lmag[select]**2)  # Apply projection effect to the sky.
-
-    # Now compute the sky power spectrum.
-    sky_pspec = np.abs(
-        np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(flat_Tsky * measure)))
     ) ** 2
+    hpx_bsq_vals[theta>np.pi/2] = 0  # Horizon cut
+    Blm = healpy.map2alm(
+        hpx_bsq_vals,
+        use_pixel_weights=True,
+        lmax=lmax,
+        datapath=pixwgt_datapath,
+    )[:,None,None]
 
-    # Now compute the diffuse matrix.
-    LM = np.array(np.meshgrid(lm_grid, lm_grid))
-    diff_mat = np.zeros((edges[-1], n_eig), dtype=complex)
-    for grp, (start, stop) in enumerate(zip(edges, edges[1:])):
-        fringe = np.exp(
-            2j * np.pi * np.einsum("bi,ilm->blm", uvws[start:stop,:2], LM)
-        )
-        kernel = np.fft.fftshift(
-            np.fft.fft2(
-                np.fft.ifftshift(
-                    gridded_beam[None,...] * fringe, axes=(1,2)
-                ), axes=(1,2)
-            ), axes=(1,2)
-        )
-        block = measure * np.einsum(
-            "puv,quv,uv->pq", kernel, kernel.conj(), sky_pspec
+    # Next, prepare the multipole integers for use later.
+    ells, emms = healpy.Alm.getlm(lmax)
+    ells = ells[:,None,None]
+    emms = emms[:,None,None]
+    zero_m = emms == 0
+
+    # Compute the uvws.
+    uvws = freq * (
+        enu_antpos[ant_1_array] - enu_antpos[ant_2_array]
+    ) / constants.c.si.value
+    if bl_convention == "j-i":
+        uvws = -uvws
+
+    # Now prepare the diffuse matrix and fill it in block-by-block.
+    sky_ells = np.arange(sky_pspec.size)
+    diff_mat = np.zeros((edges[-1], 2*n_eig), dtype=float)
+    for start, stop in zip(edges, edges[1:]):
+        # Compute the baseline differences.
+        uvw_here = uvws[start//2:stop//2]
+        uvw_diffs = uvw_here[:,None] - uvw_here[None,:]
+        uvw_diff_mags = np.linalg.norm(uvw_diffs, axis=2)
+
+        # Compute the angles associated with the differences.
+        normed_uvw_diffs = uvw_diffs / np.where(
+            np.isclose(uvw_diff_mags, 0), 1, uvw_diff_mags
+        )[:,:,None]
+        thetas = np.arccos(normed_uvw_diffs[...,2])[None,:,:]
+        phis = np.arctan2(
+            normed_uvw_diffs[...,1], normed_uvw_diffs[...,0]
+        )[None,:,:]
+
+        # Compute the bandpower measured by this group.
+        avg_uvw_mag = np.linalg.norm(uvw_here.mean(axis=0))
+        pspec_bessels = spherical_jn(sky_ells, 2*np.pi*avg_uvw_mag)
+        band_power = 4 * np.pi * np.sum(
+            sky_pspec * (2*sky_ells + 1) * pspec_bessels**2
         )
 
-        # Compute the eigenvalues/vectors for this block.
-        eigvals, eigvecs = np.linalg.eigh(block, "U")
-        if eigvals[0] < eigvals[-1]:
-            eigvals = eigvals[::-1]
-            eigvecs = eigvecs[:,::-1]
-        diff_mat[start:stop] = eigvecs[:,:n_eig] * np.sqrt(
-            eigvals[None,:n_eig]
-        )
+        # Compute the fringe harmonics.
+        bessels = spherical_jn(ells, 2*np.pi*uvw_diff_mags[None,:,:])
+        Ylms = special.sph_harm_y(ells, emms, thetas, phis)
+        flm = 1j**ells * bessels * Ylms
+        
+        # Now compute the complex covariance elements.
+        offset = np.sum(flm[zero_m] * Blm[zero_m], axis=0)
+        B_kk = np.sum(
+            flm*Blm + (-1)**ells * flm.conj() * Blm.conj(), axis=0
+        ) - offset
+
+        # Now fill in the real-valued covariance.
+        block = np.zeros(2*np.array(B_kk.shape), dtype=float)
+        block[::2,::2] = B_kk.real
+        block[1::2,1::2] = B_kk.real
+        block[1::2,::2] = B_kk.imag
+        block[::2,1::2] = -B_kk.imag
+        block *= band_power
+
+        # Now take the eigendecomposition.
+        eigvals, eigvecs = np.linalg.eigh(block)
+        sort = np.argsort(eigvals)[::-1]
+        eigvals = eigvals[sort][:2*n_eig]
+        eigvecs = eigvecs[:,sort][:,:2*n_eig]
+        block = np.sqrt(eigvals)[None,:] * eigvecs
+        diff_mat[start:stop] = np.where(np.isnan(block), 0, block)
 
     return diff_mat
