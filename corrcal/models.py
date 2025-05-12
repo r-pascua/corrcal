@@ -230,7 +230,7 @@ def _compute_diffuse_matrix_from_flat_sky(
     ells, emms = healpy.Alm.getlm(lmax)
     ells = ells[:,None,None]
     emms = emms[:,None,None]
-    zero_m = emms == 0
+    zero_m = emms[:,0,0] == 0
 
     # Compute the uvws.
     uvws = freq * (
@@ -266,7 +266,7 @@ def _compute_diffuse_matrix_from_flat_sky(
 
         # Compute the fringe harmonics.
         bessels = spherical_jn(ells, 2*np.pi*uvw_diff_mags[None,:,:])
-        Ylms = special.sph_harm_y(ells, emms, thetas, phis)
+        Ylms = sph_harm_y(ells, emms, thetas, phis)
         flm = 1j**ells * bessels * Ylms
         
         # Now compute the complex covariance elements.
