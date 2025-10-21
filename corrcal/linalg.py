@@ -1,12 +1,17 @@
 """
 Module containing various linear algebra tools.
+
+All of the functions provided in this module are thin wrappers around their
+C counterparts.
 """
 import numpy as np
+from numpy.typing import NDArray
 import ctypes
+from typing import Type
 from . import _cfuncs
 from . import utils
 
-def tril_inv(mat: np.ndarray):
+def tril_inv(mat: NDArray[float]) -> NDArray[float]:
     """Invert a lower triangular matrix.
 
     Parameters
@@ -32,8 +37,10 @@ def tril_inv(mat: np.ndarray):
     return inv
 
 
-def cholesky(mat: np.ndarray, inplace: bool = False):
-    """Take the Cholesky decomposition of a matrix.
+def cholesky(
+        mat: NDArray[float], inplace: bool = False
+    ) -> NDArray[float] | None:
+    """Take the (lower-triangular) Cholesky decomposition of a matrix.
 
     Parameters
     ----------
@@ -41,6 +48,10 @@ def cholesky(mat: np.ndarray, inplace: bool = False):
         Matrix to decompose. If the provided array is 2-dimensional, then it
         must be square. If it is 3-dimensional, then it is interpreted as
         a collection of square matrices to be decomposed in parallel.
+
+    inplace
+        Whether to replace the provided matrix with its Cholesky factorization
+        or return a new object. Returns a new object by default.
 
     Returns
     -------
@@ -75,8 +86,8 @@ def cholesky(mat: np.ndarray, inplace: bool = False):
 
 
 def block_multiply(
-    diff_mat: np.ndarray, blocks: np.ndarray, edges: np.ndarray
-):
+    diff_mat: NDArray[float], blocks: NDArray[float], edges: NDArray[int]
+) -> NDArray[float]:
     r"""Helper function for diffuse matrix inversion routine.
 
     This routine calculates :math:`N^{-1} \Delta {L_\Delta}^{-1\dagger}` as
@@ -88,10 +99,10 @@ def block_multiply(
     ----------
     diff_mat
         Diffuse matrix, sorted by redundant groups. Should be an array of
-        double precision complex numbers.
+        double precision floats.
     blocks
-        Array of many small square matrices. Should represent the block-
-        diagonal entries in the Cholesky decomposition of the small matrix
+        Array of many small square matrices that represent the block-diagonal
+        entries in the Cholesky decomposition of the small matrix
         :math:`1 \pm \Delta^\dagger N^{-1} \Delta` that is computed during
         the first application of the Woodbury identity.
     edges
@@ -101,8 +112,7 @@ def block_multiply(
     Returns
     -------
     out
-        Product of the diffuse matrix and small blocks--this is the "inverse"
-        of the diffuse matrix.
+        Product of the diffuse matrix and small blocks.
     """
     out = np.zeros_like(diff_mat)
     _cfuncs.block_multiply(
@@ -117,8 +127,8 @@ def block_multiply(
     
 
 def mult_src_by_blocks(
-    blocks_H: np.ndarray, src_mat: np.ndarray, edges: np.ndarray
-):
+    blocks_T: NDArray[float], src_mat: NDArray[float], edges: NDArray[int]
+) -> NDArray[float]:
     r"""Prepare the source matrix for inversion.
 
     This routine calculates :math:`{\Delta'}^\dag \Sigma` as part of the
@@ -128,9 +138,9 @@ def mult_src_by_blocks(
 
     Parameters
     ----------
-    blocks_H
-        Hermitian conjugate of the "inverse" diffuse matrix. This should be
-        an array of double precision floats.
+    blocks_T
+        Transpose of the "inverse" diffuse matrix. This should be an array of
+        double precision floats.
     src_mat
         Source matrix, sorted by redundant groups. This should be an array of
         double precision floats.
@@ -144,13 +154,13 @@ def mult_src_by_blocks(
         Product of the transpose of the "inverse" diffuse matrix and the
         source matrix.
     """
-    n_eig = blocks_H.shape[0]
+    n_eig = blocks_T.shape[0]
     n_grp = edges.size - 1
     n_bl = edges[-1]
     n_src = src_mat.shape[-1]
     out = np.zeros((n_eig*n_grp, n_src), dtype=float)
     _cfuncs.mult_src_by_blocks(
-        blocks_H.ctypes.data,
+        blocks_T.ctypes.data,
         src_mat.ctypes.data,
         out.ctypes.data,
         edges.ctypes.data,
@@ -162,11 +172,16 @@ def mult_src_by_blocks(
     return out
 
 
-def mult_src_blocks_by_diffuse(inv_diff_mat, src_blocks, edges):
+def mult_src_blocks_by_diffuse(
+        inv_diff_mat: NDArray[float],
+        src_blocks: NDArray[float],
+        edges: NDArray[int],
+    ) -> NDArray[float]:
     """Compute the inverse diffuse covariance times the source matrix.
 
-    This function computes the product :math:`\Delta'\Delta'^\dag\Sigma` when
-    provided with :math:`\Delta'` and :math:`\Delta'^\dag\Sigma` (as well as
+    This function computes the product
+    :math:`\bar{\Delta}\bar{\Delta}^\dag\Sigma` when provided with
+    :math:`\bar{\Delta}` and :math:`\bar{\Delta}^\dag\Sigma` (as well as
     the redundant group edges) as inputs. It is required in two different
     parts of the second application of the Woodbury identity.
 
@@ -175,7 +190,7 @@ def mult_src_blocks_by_diffuse(inv_diff_mat, src_blocks, edges):
     inv_diff_mat
         The "inverse" of the diffuse matrix.
     src_blocks
-        The product of the Hermitian conjugate of the "inverse" diffuse matrix
+        The product of the transpose of the "inverse" diffuse matrix
         and the source matrix.
     edges
         Array specifying the edges of each redundant group. The array should
@@ -202,7 +217,9 @@ def mult_src_blocks_by_diffuse(inv_diff_mat, src_blocks, edges):
     return out
 
 
-def sparse_cov_times_vec(sparse_cov, vec):
+def sparse_cov_times_vec(
+        sparse_cov: Type[SparseCov], vec: NDArray[float]
+    ) -> NDArray[float]:
     """Multiply a vector by a sparse covariance matrix.
     
     Parameters
@@ -235,8 +252,8 @@ def sparse_cov_times_vec(sparse_cov, vec):
 
 
 def make_small_blocks(
-    noise_diag: np.ndarray, diff_mat: np.ndarray, edges: np.ndarray
-):
+    noise_diag: NDArray[float], diff_mat: NDArray[float], edges: NDArray[int]
+) -> NDArray[float]:
     """Make small blocks for use in inverting the diffuse matrix.
 
     This routine calculates :math:`\Delta^\dag N^{-1} \Delta` for a diffuse
@@ -278,7 +295,7 @@ def make_small_blocks(
     return out
 
 
-def sum_diags(blocks):
-    """Helper function for computing determinant of covariance."""
+def sum_diags(blocks: NDArray[float]) -> float:
+    """Helper function for computing log-determinant of covariance."""
     n_grps, n_eig = blocks.shape[:2]
     return _cfuncs.sum_diags(blocks.ctypes.data, int(n_grps), int(n_eig))
