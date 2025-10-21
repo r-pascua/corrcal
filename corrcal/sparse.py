@@ -9,7 +9,7 @@ from . import utils
 
 class SparseCov:
     r"""
-    Fill this out in full later. Rough notes for now:
+    Class for the doubly sparse representation of the CorrCal covariance.
 
     Attributes
     ----------
@@ -17,35 +17,71 @@ class SparseCov:
         The diagonal of the noise variance matrix. Expected to be
         a 1-d array of complex numbers.
     src_mat
-        The :math:`$\sigma$` matrix containing information about point
-        sources. See Eq. ?? of Pascua+ 23. Expected shape ``(n_bls, n_src)``.
+        The :math:`\Sigma` matrix containing the source vectors (see
+        Equations 49 and 50 in Pascua+ 2025). Expected shape `(n_bls, n_src)`.
     diff_mat
         The :math:`$\Delta$` matrix containing information about the
-        sky angular power spectrum and array redundancy. See Eq. ?? of
-        Pascua+ 23. If not including information about correlations between
-        distinct quasi-redundant groups, then the expected shape is
-        ``(n_bls, n_eig)``, and the matrix is interpreted as the
-        block-diagonal entries of the diffuse matrix; otherwise, the shape
-        should be ``(n_bls, n_grp*n_eig)``, and the matrix is interpreted
-        as the full diffuse matrix.
+        sky angular power spectrum and array redundancy. Currently, the
+        diffuse matrix is assumed to be block diagonal, as in Equation 45
+        of Pascua+ 2025; there is not yet support for including off-diagonal
+        blocks. The expected shape is `(n_bls, n_eig)`, where `n_eig` should
+        be a multiple of two (i.e., the eigenmodes for both the real-real and
+        imaginary-imaginary covariance must be provided).
     edges
         Array of integers denoting the edges of each quasi-redundant
         group, accounting for the real/imaginary split.
     n_grp
-        The number of quasi-redundant groups in the array.
+        The number of redundant groups in the array.
     n_src
         The number of sources used in the model covariance.
     n_eig
-        The number of eigenmodes used to represent each quasi-redundant group.
+        The number of eigenmodes used to represent each redundant group.
     n_bls
         The total number of baselines in the array.
     isinv
         Whether the matrix is the inverse of the covariance or not.
+
+    Methods
+    -------
+    __matmul__
+        Left multiplication acting on a vector (i.e., C @ v).
+    apply_gains
+        Scale diffuse/source matrices by per-antenna gains.
+    copy
+        Return a copy of self.
+    expand
+        Return the dense covariance as a numpy array.
+    inv
+        Compute sparse inverse representation and return as SparseCov.
     """
 
-    def __init__(self, noise, src_mat, diff_mat, edges, n_eig, isinv=False):
+    def __init__(
+            self,
+            noise: NDArray[float],
+            src_mat: NDArray[float],
+            diff_mat: NDArray[float],
+            edges: NDArray[int],
+            n_eig: int,
+            isinv: bool = False
+        ) -> None:
         """
-        Decide how to split docs between class and constructor.
+        Create a SparseCov object.
+
+        Parameters
+        ----------
+        noise
+            Diagonal of the thermal noise variance matrix.
+        src_mat
+            Matrix of source vectors encoding array response to point sources.
+        diff_mat
+            Block-diagonal entries of diffuse matrix.
+        edges
+            Array indicating the start and end of each redundant group.
+        n_eig
+            Number of eigenmodes used for each redundant group. This is 
+            currently fixed to be uniform across groups.
+        isinv
+            Whether this object represents the inverse representation.
         """
         self.noise = np.ascontiguousarray(noise, dtype=float)
         self.src_mat = np.ascontiguousarray(src_mat, dtype=float)
@@ -71,12 +107,17 @@ class SparseCov:
             )
 
 
-    def __matmul__(self, other):
+    def __matmul__(self, other: NDArray[float]) -> NDArray[float]:
         """Multiply by a vector on the right."""
         return linalg.sparse_cov_times_vec(self, other)
 
 
-    def apply_gains(self, gains, ant_1_array, ant_2_array):
+    def apply_gains(
+            self,
+            gains: NDArray[float],
+            ant_1_array: NDArray[int],
+            ant_2_array: NDArray[int],
+        ) -> None:
         """Apply complex gains to source and diffuse matrices."""
         self.diff_mat = utils.apply_gains_to_mat(
             gains, self.diff_mat, ant_1_array, ant_2_array
@@ -86,7 +127,7 @@ class SparseCov:
         )
 
 
-    def copy(self):
+    def copy(self) -> Type[SparseCov]:
         """Return a copy of the class instance."""
         return SparseCov(
             noise=self.noise.copy(),
@@ -98,7 +139,7 @@ class SparseCov:
         )
 
 
-    def expand(self):
+    def expand(self) -> NDArray[float]:
         """Return the dense covariance (i.e., multiply and add terms)."""
         if self.diff_is_diag:
             diff_mat = np.zeros(
@@ -118,7 +159,7 @@ class SparseCov:
         return np.diag(self.noise) + cov
 
 
-    def inv(self, return_det=False):
+    def inv(self, return_det: bool = False) -> Type[SparseCov]:
         """Invert the covariance with the Woodbury identity.
 
         Parameters
@@ -147,7 +188,7 @@ class SparseCov:
             return self._full_inv(return_det=return_det)
 
 
-    def _diag_inv(self, return_det=False):
+    def _diag_inv(self, return_det: bool = False) -> NDArray[float]:
         """Inversion routine for when the diffuse matrix is block-diagonal."""
         # The noise is independent of the gains, so we can ignore it here.
         if return_det:
