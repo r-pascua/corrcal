@@ -8,6 +8,7 @@ import numpy as np
 from numpy.typing import NDArray
 import ctypes
 from typing import Type
+from sparse import SparseCov
 from . import _cfuncs
 from . import utils
 

@@ -1,16 +1,37 @@
 import numpy as np
 import warnings
 
+from typing import Type
+from sparse import SparseCov
 from . import _cfuncs
 from . import linalg
 from . import sparse
 from . import utils
 
 
-def nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.inf):
-    """Calculate the negative log-likelihood.
+def nll(
+    gains: NDArray[float],
+    cov: Type[SparseCov],
+    data: NDArray[float],
+    ant_1_inds: NDArray[int],
+    ant_2_inds: NDArray[int],
+    scale: float = 1,
+    phs_norm_fac: float = np.inf,
+) -> float:
+    """Calculate the CorrCal negative log-likelihood.
 
-    TODO: Improve the docs at some point.
+    Evaluates Equation 61 from Pascua+ 2025,
+
+    .. math::
+
+        -\log\mathcal{L} = \log{\rm det} \mathbf{C}
+        + \mathbfit{d}^T \mathbf{C}^{-1} \mathbfit{d}
+        + N_{\rm ant}^{-2} \sigma_{\rm phs}^{-2} \biggl\sum_a \phi_a\biggr|^2.
+
+    The steps followed by this function are discussed in Section 4.2.1 of
+    Pascua+ 2025. Essentially, it inverts the covariance (and picks up the
+    log-determinant in the process), then computes chi-squared and the phase
+    normalization.
 
     Parameters
     ----------
@@ -51,15 +72,58 @@ def nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.inf):
     return np.real(chisq) + logdet + phs_norm
 
 
-def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.inf):
-    """Calculate the gradient of the negative log-likelihood.
+def grad_nll(
+    gains: NDArray[float],
+    cov: Type[SparseCov],
+    data: NDArray[float],
+    ant_1_inds: NDArray[int],
+    ant_2_inds: NDArray[int],
+    scale: float = 1,
+    phs_norm_fac: float = np.inf,
+) -> NDArray[float]:
+    """Calculate the gradient of the CorrCal negative log-likelihood.
 
-    This is the gradient with respect to the real/imaginary per-antenna gains.
-    See Eq. ?? of Pascua+ 25 for details of what is being calculated.
+    This function computes the gradient of the negative log-likelihood with
+    respect to the real/imaginary parts of the gains, as given in Equation 71
+    of Pascua+ 2025,
+
+    .. math::
+
+        -\partial\log\mathcal{L} = {\rm Tr}\bigl(
+            \mathbf{C}^{-1} \partial \mathbf{C}
+        \bigr) + \mathbfit{d}^T \partial\mathbf{C}^{-1} \mathbfit{d}
+        - \partial\log\mathcal{L}_\phi,
+
+    where :math:`\mathcal{L}_\phi` is the phase normalization prior. This
+    function follows the steps described in Section 4.2.2 of Pascua+ 2025.
 
     Parameters
     ----------
-    same as nll. fill this out later.
+    gains
+        Per-antenna gains, alternating real/imaginary so that the even indices
+        correspond to the real part and the odd indices correspond to the
+        imaginary part.
+    cov
+        Covariance matrix with inversion methods and methods for building
+        gain matrices.
+    data
+        Real-valued array containing the data sorted into quasi-redundant
+        groups in alternating real/imaginary format.
+    ant_1_inds
+        Indices of the first antenna in each baseline in the sorted data.
+    ant_2_inds
+        Indices of the second antenna in each baseline in the sorted data.
+    scale
+        Amount that the gains were scaled prior to starting the conjugate
+        gradient routine.
+    phs_norm_fac
+        Scale of the Gaussian prior placed on the average gain phase. Default
+        is to not apply a prior to the gain phases.
+
+    Returns
+    -------
+    grad_nll
+        Gradient of the negative log-likelihood.
     """
     # Prepare the gain matrix.
     gains = gains / scale
@@ -108,18 +172,59 @@ def grad_nll(gains, cov, data, ant_1_inds, ant_2_inds, scale=1, phs_norm_fac=np.
     return gradient / scale
 
 
-def accumulate_gradient(gains, s, t, P, noise, ant_1_inds, ant_2_inds):
-    """Loop over baselines and accumulate the per-antenna gradient contribs.
+def accumulate_gradient(
+    gains: NDArray[float],
+    s: NDArray[float],
+    t: NDArray[float],
+    inv_P: NDArray[float],
+    noise: NDArray[float],
+    ant_1_inds: NDArray[int],
+    ant_2_inds: NDArray[int],
+) -> NDArray[float]:
+    """Accumulate gradient components by looping over baselines.
 
-    Thin wrapper around the accumulate_gradient C function.
+    This function computes the sums in Equations 79 and 89 of Pascua+ 2025,
+    provided the gains and appropriate auxiliary vectors. The chi-squared
+    gradient is accumulated via
+
+    .. math::
+        
+        \mathbfit{d}^T \partial \mathbf{C}^{-1} \mathbfit{d} = -2 \sum_k
+            s_k \partial G_k^R + t_k \partial G_k^I,
+
+    while the gradient of the log-determinant is accumulated via
+
+    .. math::
+
+        {\rm Tr}\bigl(\mathbf{C}^{-1} \partial \mathbfit{C}\bigr) = 2 \sum_k
+            \frac{\sigma_k^2 \bar{P}_k}{|G_k|^2} \Bigl( G_k^R \partial G_k^R +
+            G_k^I \partial G_k^I \Bigr).
+
 
     Parameters
     ----------
-    TODO
+    gains
+        Per-antenna gains, alternating real/imaginary so that the even indices
+        correspond to the real part and the odd indices correspond to the
+        imaginary part.
+    s, t
+        Auxiliary vectors formed from the covariance, data, and gains. See
+        Section 4.2.2 of Pascua+ 2025 for details.
+    inv_P
+        Total ``sky power'' in the inverse covariance for each baseline.
+    noise
+        Thermal noise variance.
+    ant_1_inds, ant_2_inds
+        Index arrays mapping baseline indices to antenna indices.
 
     Returns
     -------
-    TODO
+    grad_nll
+        Gradient of the negative log-likelihood (excluding phase prior).
+
+    Notes
+    -----
+    This is just a thin wrapper around the accumulate_gradient C function.
     """
     gradient = np.zeros_like(gains)
     n_bls = ant_1_inds.size
@@ -127,7 +232,7 @@ def accumulate_gradient(gains, s, t, P, noise, ant_1_inds, ant_2_inds):
         gains.ctypes.data,
         s.ctypes.data,
         t.ctypes.data,
-        P.ctypes.data,
+        inv_P.ctypes.data,
         noise.ctypes.data,
         gradient.ctypes.data,
         ant_1_inds.ctypes.data,
