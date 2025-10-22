@@ -38,11 +38,11 @@ struct sparse_cov *init_cov(
      *      Diagonal of noise variance matrix.
      *  diff_mat
      *      Block-diagonal elements of the diffuse matrix, sorted by redundant
-     *      groups. Should have shape (2*n_bl, n_eig). See discussion in Section
-     *      ?? of Pascua+ 2023 for details.
+     *      groups. Should have shape (2*n_bl, n_eig). See discussion in 
+     *      Section 3 of Pascua+ 2025 for details.
      *  src_mat
      *      Source matrix, sorted by redundant groups. Should have shape
-     *      (2*n_bl, n_src). See discussion in Section ?? of Pascua+ 2023 for
+     *      (2*n_bl, n_src). See discussion in Section 3 of Pascua+ 2025 for
      *      details.
      *  n_bl
      *      Number of baselines in the data.
@@ -57,15 +57,14 @@ struct sparse_cov *init_cov(
      *      Array indexing the edges of each redundant group. For example,
      *      edges[i] gives the starting index of redundant group i.
      *  isinv
-     *      Whether the covariance has been inverted (i.e., whether the source
-     *      and diffuse matrices are primed, as discussed in Section ?? of
-     *      Pascua+ 2023).
+     *      Whether the sparse_cov object represents the covariance or its
+     *      inverse.
      *
      *  Returns
      *  -------
      *  sparse_cov
-     *      Structure containing all of the information necessary for working
-     *      with the sparse representation of the covariance.
+     *      Structure containing all of the information necessary for
+     *      working with the sparse representation of the covariance.
      */
     struct sparse_cov *cov = (struct sparse_cov *)malloc(sizeof(struct sparse_cov));
     cov->noise = noise;
@@ -193,7 +192,8 @@ void block_multiply(
      *      array should have shape (n_grp, n_eig, n_eig) (i.e., it contains
      *      n_grp square blocks each with shape (n_eig, n_eig)).
      *  diffuse_mat
-     *      Diffuse matrix sorted into redundant groups, with shape (2*n_bl, n_eig).
+     *      Diffuse matrix sorted into redundant groups, with shape 
+     *      (2*n_bl, n_eig).
      *  out
      *      Where to write the product. Should have shape (2*n_bl, n_eig).
      *  edges
@@ -208,9 +208,9 @@ void block_multiply(
      *  -----
      *  This function is meant to be used in the first application of the
      *  Woodbury identity in the inversion routine: it performs the operation
-     *  out = diffuse_mat @ blocks block-by-block. See discussion in Section
-     *  ?? of Pascua+ 2023 for details. (This is used for Step 1b in the
-     *  prelim presentation, slide 45.)
+     *  out = diffuse_mat @ blocks block-by-block. This function essentially
+     *  computes the rightmost matrix multiplication in Equation 66 of
+     *  Pascua+ 2025.
      */
     for (int grp=0; grp<n_grp; grp++) {
         mymatmul(
@@ -223,52 +223,6 @@ void block_multiply(
             edges[grp+1]-edges[grp],
             n_eig,
             n_eig
-        );
-    }
-}
-
-
-// TODO: potentially delete?
-void mult_diff_mats(
-    double *diff_mat_H, double *inv_diff_mat, double *out,
-    long *edges, int n_bl, int n_eig, int n_grp
-) {
-    /*
-     *  void mult_diff_mats(
-     *      double *diff_mat_H, double *inv_diff_mat, double *out,
-     *      long *edges, int n_bl, int n_eig, int n_grp
-     *  )
-     * 
-     *  Compute the product diff_mat_H @ inv_diff_mat.
-     *
-     *  Parameters
-     *  ----------
-     *  diff_mat_H
-     *      Hermitian conjugate of the diffuse matrix.
-     *  inv_diff_mat
-     *      "Inverse" diffuse matrix.
-     *  out
-     *      Where to write the product.
-     *  edges
-     *      Array denoting the edges of each redundant group.
-     *  n_bl
-     *      Number of baselines.
-     *  n_eig
-     *      Number of eigenmodes per redundant group.
-     *  n_grp
-     *      Number of redundant groups.
-     */
-    for (int i=0; i<n_grp; i++){
-        mymatmul(
-            diff_mat_H+edges[i],
-            inv_diff_mat+n_eig*edges[i],
-            out+i*n_eig*n_eig,
-            n_bl,
-            n_eig,
-            n_eig,
-            n_eig,
-            n_eig,
-            edges[i+1]-edges[i]
         );
     }
 }
@@ -289,7 +243,7 @@ void mult_src_by_blocks(
      *  Parameters
      *  ----------
      *  blocks_H
-     *      Hermitian conjugate of the block-diagonal entries in the "inverse"
+     *      Transpose of the block-diagonal entries in the "inverse"
      *      diffuse matrix. Should have shape (n_eig, n_bl).
      *  src_mat
      *      Source matrix with shape (n_bl, n_src).
@@ -313,9 +267,8 @@ void mult_src_by_blocks(
      *  Woodbury identity in the inversion routine. It performs the matrix
      *  multiplication of the "inverse" diffuse matrix and the source matrix
      *  through repeated matrix-vector multiplications between the redundant
-     *  blocks and the source vectors. See discussion in Section ?? of Pascua+
-     *  2023 for details. (This is used in Step 2a in the prelim presentation,
-     *  slide 49.)
+     *  blocks and the source vectors. See Section 4.2.1 and Equation 68 of
+     *  Pascua+ 2025 for reference.
      */
     for (int grp=0; grp<n_grp; grp++) {
         mymatmul(
@@ -338,7 +291,7 @@ void mult_src_blocks_by_diffuse(
     int n_src, int n_eig, int n_grp
 ) {
     /*
-     *  Compute the inverse diffuse covariance times the source matrix.
+     *  Second step in computing the "inverse" source matrix.
      *
      *  Parameters
      *  ----------
@@ -574,10 +527,9 @@ void make_small_block(
      *
      *  Notes
      *  -----
-     *  This function performs the operation out = diff_mat.H @ Ninv @ diff_mat
+     *  This function computes out = diff_mat.T @ Ninv @ diff_mat
      *  for one redundant group as part of the first application of the
-     *  Woodbury identity. See the discussion in Section ?? of Pascua+ 2023
-     *  for details.
+     *  Woodbury identity.
      */
     for (int i=0; i<n_eig; i++) {
         for (int j=i; j<n_eig; j++) {
@@ -625,10 +577,9 @@ void make_all_small_blocks(
      *
      *  Notes
      *  -----
-     *  This function performs the operation out = diff_mat.T @ Ninv @ diff_mat
+     *  This function computes out = diff_mat.T @ Ninv @ diff_mat
      *  for all redundant groups as part of the first application of the
-     *  Woodbury identity. See the discussion in Section ?? of Pascua+ 2023
-     *  for details.
+     *  Woodbury identity. 
      */
     for (int i=0; i<n_block; i++) {
         make_small_block(
@@ -657,7 +608,7 @@ double sum_diags(
      *  ----------
      *  blocks
      *      Cholesky decomposition of the small n_eig by n_eig blocks (i.e.,
-     *      L_\Delta in Eq. ??? from Pascua+ 2025).
+     *      L_\Delta defined in Equation 67 from Pascua+ 2025).
      *  n_grp
      *      Number of redundant groups.
      *  n_eig
@@ -687,11 +638,11 @@ void accumulate_gradient(
      *  )
      *
      *  Accumulate the gradient of the likelihood antenna-by-antenna while
-     *  looping over baselines in the sum. Refer to Section ?? of Pascua+ 2025
-     *  for details on the gradient calculation.
+     *  looping over baselines in the sum. Refer to Section 4.2.2 of 
+     *  Pascua+ 2025 for details on the gradient calculation.
      *
      *  gains are per antenna, alternating real/imag
-     *  s, t, P are all length Nbl, real-valued
+     *  s, t, P are all length n_bl, real-valued
      *
      */
     for (int k=0; k<n_bl; k++){
