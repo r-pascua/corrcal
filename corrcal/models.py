@@ -238,8 +238,8 @@ def _compute_diffuse_matrix_from_flat_sky(
         Path to files containing the pixel weight arrays used when taking
         spherical harmonic transformations with `healpy.map2alm`.
     bl_convention
-        Whether baselines are computed as x_j - x_i or x_i - x_j for
-        baseline (i,j).
+        Whether baselines are computed as x_j - x_i ("j-i" convention) or
+        x_i - x_j ("i-j" convention) for baseline (i,j).
 
     Returns
     -------
@@ -251,7 +251,7 @@ def _compute_diffuse_matrix_from_flat_sky(
 
     Notes
     -----
-    The antenna number arrays should be sorted by redundnacy so that 
+    The antenna number arrays should be sorted by redundancy so that 
     the following is always true:
         
     .. code-block:: python

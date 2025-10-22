@@ -1,23 +1,46 @@
 import ctypes
 import numpy as np
-from typing import Sequence
+from numpy.typing import NDArray
+from typing import Sequence, NoReturn
 from . import linalg
 from . import _cfuncs
 
 
-def apply_gains_to_mat(gains, mat, ant_1_array, ant_2_array):
-    """Apply a gain-like matrix to a provided matrix."""
+def apply_gains_to_mat(
+    gains: NDArray[float],
+    mat: NDArray[float],
+    ant_1_array: NDArray[int],
+    ant_2_array: NDArray[int],
+) -> NDArray[float]:
+    """Apply per-antenna gains to a per-baseline matrix.
+
+    Parameters
+    ----------
+    gains
+        Per-antenna gains, arranged into alternating real/imag parts.
+    mat
+        Matrix to apply the gains to, with alternating real/imag parts
+        along the baseline axis. The matrix is assumed to index over
+        baselines along the zeroth axis.
+    ant_1_array, ant_2_array
+        Index arrays indicating which antennas are used in each baseline.
+
+    Returns
+    -------
+    out
+        Input matrix with the provided gains applied.
+    """
     complex_gains = gains[::2] + 1j*gains[1::2]
     gain_mat = (
-        complex_gains[ant_1_array,None] * complex_gains[ant_2_array,None].conj()
-    )
+        complex_gains[ant_1_array] * complex_gains[ant_2_array].conj()
+    )[:,None]
     out = np.zeros_like(mat)
     out[::2] = gain_mat.real * mat[::2] - gain_mat.imag * mat[1::2]
     out[1::2] = gain_mat.imag * mat[::2] + gain_mat.real * mat[1::2]
     return out
     
 
-def check_parallel(parallel, gpu):
+def check_parallel(parallel: bool, gpu: bool) -> NoReturn:
     """
     Ensure that only parallelization or GPU acceleration is requested.
 
@@ -36,33 +59,30 @@ def check_parallel(parallel, gpu):
 
 
 def build_baseline_array(
-    ant_1_array: np.ndarray,
-    ant_2_array: np.ndarray,
-    antpos: np.ndarray,
+    ant_1_array: NDArray[int],
+    ant_2_array: NDArray[int],
+    antpos: NDArray[float],
     antnums: Sequence,
 ):
     """Calculate all the baseline vectors for the provided parameters.
 
     Parameters
     ----------
-    ant_1_array
-        Array specifying the first antenna in each baseline.
-    ant_2_array
-        Array specifying the second antenna in each baseline.
+    ant_1_array, ant_2_array
+        Index arrays indicating which antennas are used in each baseline.
     antpos
-        Array with shape (Nants, 3) giving the ENU position, in meters, of
-        each antenna in the array.
+        Array with shape ``(Nants, 3)`` giving the position, in meters,
+        of each antenna in the array in a local ENU frame.
     antnums
-        Iterable giving the number of each antenna in the order that the terms
-        of ``antpos`` appear.
+        Iterable indicating the label of each antenna whose position is
+        provided in the ``antpos`` array.
 
     Returns
     -------
     baselines
-        Array with shape (Nbls, 3) giving all of the baselines for the provided
-        parameters. This is calculated using the convention that the baseline
-        is formed by subtracting the position of antenna 1 from the position of
-        antenna 2, i.e. :math:`b_{ij} = x_j - x_i`.
+        Array with shape ``(N_baseline, 3)`` containing the baseline
+        vectors for each pair of antennas. Baselines are calculated using
+        the "j-i" convention, where :math:`b_{ij} = x_j - x_i`.
     """
     ant_1_inds = np.zeros_like(ant_1_array)
     ant_2_inds = np.zeros_like(ant_2_array)
@@ -72,15 +92,17 @@ def build_baseline_array(
     return antpos[ant_2_inds] - antpos[ant_1_inds]
 
 
-def rephase_to_ant(gains, ant=0):
+def rephase_to_ant(
+    gains: NDArray[float] | NDArray[complex], ant: Optional[int] = 0
+) -> NDArray[float] | NDArray[complex]:
     """Rephase gains to a reference antenna."""
     if np.iscomplexobj(gains):
         complex_gains = gains.copy()
     else:
         complex_gains = build_complex_gains(gains)
-    ref_gain = complex_gains[ant]
-    conj_phase = ref_gain.conj() / np.abs(ref_gain)
-    rephased_complex_gains = complex_gains * conj_phase
+    rephased_complex_gains = complex_gains * np.exp(
+        -1j * np.angle(complex_gains[ant])
+    )
     if np.iscomplexobj(gains):
         # If input is complex, output should be as well
         return rephased_complex_gains
@@ -91,7 +113,7 @@ def rephase_to_ant(gains, ant=0):
         return rephased_gains
 
 
-def comply_shape(mat):
+def comply_shape(mat: NDArray[float]) -> NoReturn:
     """Check that the provided array has the right shape."""
     if mat.shape[-1] != mat.shape[-2]:
         raise ValueError("Array is not square!")
