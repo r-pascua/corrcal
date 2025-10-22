@@ -2,6 +2,7 @@ import ctypes
 from copy import deepcopy
 
 import numpy as np
+from numpy.typing import NDArray
 
 from . import linalg
 from . import utils
@@ -118,7 +119,16 @@ class SparseCov:
             ant_1_array: NDArray[int],
             ant_2_array: NDArray[int],
         ) -> None:
-        """Apply complex gains to source and diffuse matrices."""
+        """Apply complex gains to source and diffuse matrices.
+
+        Parameters
+        ----------
+        gains
+            Per-antenna gains in alternating real/imaginary format.
+        ant_1_array, ant_2_array
+            Index arrays indicating which pair of antennas are used for
+            each baseline.
+        """
         self.diff_mat = utils.apply_gains_to_mat(
             gains, self.diff_mat, ant_1_array, ant_2_array
         )
@@ -127,7 +137,7 @@ class SparseCov:
         )
 
 
-    def copy(self) -> Type[SparseCov]:
+    def copy(self) -> SparseCov:
         """Return a copy of the class instance."""
         return SparseCov(
             noise=self.noise.copy(),
@@ -159,7 +169,7 @@ class SparseCov:
         return np.diag(self.noise) + cov
 
 
-    def inv(self, return_det: bool = False) -> Type[SparseCov]:
+    def inv(self, return_det: bool = False) -> SparseCov:
         """Invert the covariance with the Woodbury identity.
 
         Parameters
@@ -184,7 +194,10 @@ class SparseCov:
         if self.diff_is_diag:
             return self._diag_inv(return_det=return_det)
         else:
-            raise NotImplementedError("Work in progress.")
+            raise NotImplementedError(
+                "Inverting with a non-block-diagonal diffuse matrix is"
+                "not yet supported."
+            )
             return self._full_inv(return_det=return_det)
 
 

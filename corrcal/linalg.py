@@ -219,7 +219,7 @@ def mult_src_blocks_by_diffuse(
 
 
 def sparse_cov_times_vec(
-        sparse_cov: Type[SparseCov], vec: NDArray[float]
+        sparse_cov: SparseCov, vec: NDArray[float]
     ) -> NDArray[float]:
     """Multiply a vector by a sparse covariance matrix.
     
@@ -297,6 +297,10 @@ def make_small_blocks(
 
 
 def sum_diags(blocks: NDArray[float]) -> float:
-    """Helper function for computing log-determinant of covariance."""
+    """Helper function for computing log-determinant of covariance.
+
+    This function simply computes the contribution to the log-determinant from
+    the block-diagonal diffuse matrix.
+    """
     n_grps, n_eig = blocks.shape[:2]
     return _cfuncs.sum_diags(blocks.ctypes.data, int(n_grps), int(n_eig))

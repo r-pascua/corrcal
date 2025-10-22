@@ -2,9 +2,10 @@
 from astropy import constants, units
 import healpy
 import numpy as np
-from typing import Optional, Union
+from numpy.typing import NDArray
+from typing import Optional, Type
 from pathlib import Path
-from pyuvdata import UVBeam, UVData
+from pyuvdata import UVBeam, UVData, AnalyticBeam
 from pyradiosky import SkyModel
 from .covdata import UVCov
 from . import utils
@@ -13,29 +14,30 @@ from scipy.special import spherical_jn, sph_harm_y
 
 def build_source_model(
     *,
-    freq_array: Optional[np.ndarray] = None,
-    lst_array: Optional[np.ndarray] = None,
-    time_array: Optional[np.ndarray] = None,
-    telescope_location: Optional[np.ndarray] = None,
-    baselines: Optional[np.ndarray] = None,
-    data: Optional[Union[UVData, str]] = None,
-    beam: Union[UVBeam, str] = None,
+    freq_array: Optional[NDArray[float]] = None,
+    lst_array: Optional[NDArray[float]] = None,
+    time_array: Optional[NDArray[float]] = None,
+    telescope_location: Optional[NDArray[float]] = None,
+    baselines: Optional[NDArray[float]] = None,
+    data: Optional[UVData | str] = None,
+    beam: UVBeam | Type[AnalyticBeam] | str = None,
     sources: SkyModel = None,
 ) -> np.ndarray:
     r"""Construct the point-source matrix.
 
-    This is the :math:`\sigma` matrix in Eq. ?? of <ref paper>. In particular,
-    each matrix element has the following form:
+
+    This function computes the source matrix according to Equation 26 from
+    Pascua+ 2025. Each matrix element has the following form:
 
     .. math::
 
-        \sigma_{km}(\nu,t) = S_m(\nu) A_\nu\bigl(\hat{n}_m(t)\bigr)
-        \exp\bigl(-i2\pi\nu\vec {b}_k \cdot \hat{n}_m(t) / c\bigr).
+        \Sigma_{kj}(\nu,t) = S_j(\nu) A_\nu\bigl(\hat{r}_j(t)\bigr)
+        \exp\bigl(-i2\pi\nu\vec {b}_k \cdot \hat{n}_j(t) / c\bigr).
 
     For computational simplicity, we work in a frame where the array is fixed,
-    so the positions of the sources change for each observed time. For now,
-    polarization is handled under the assumption that the sky is pure Stokes-I,
-    and so any polarization comes solely from the antenna response.
+    so the positions of the sources change for each observed time. This
+    function assumes that the sky is purely Stokes-I (i.e., :math:`S_j(\nu)`
+    is the total flux density for source :math:`j` at frequency :math:`\nu`).
 
     Parameters
     ----------
@@ -53,8 +55,8 @@ def build_source_model(
         telescope site. Does not need to be provided if ``data`` is provided.
     baseline_array
         Array containing the baseline vectors for the entire array, in units
-        of meters. Does not need to be provided if ``data`` is provided. Should
-        be shape (Nbls,3) and in topocentric (ENU) coordinates.
+        of meters. Does not need to be provided if ``data`` is provided.
+        Should be shape (Nbls,3) and in topocentric (ENU) coordinates.
     data
         ``UVData`` object or path to a file that can be loaded into a
         ``UVData`` object. Does not need to be provided if ``freq_array``,
@@ -73,7 +75,7 @@ def build_source_model(
     -------
     source_model
         Array with shape (Ntimes, Nfreqs, Npols, Nbls, Nsrc) representing the
-        :math:`\sigma` matrix from Eq. ?? of <ref paper> at each time,
+        :math:`\Sigma` matrix from Equation 26 of Pascua+ 2025 at each time,
         frequency, and polarization.
 
     Notes
@@ -105,8 +107,7 @@ def build_source_model(
             )
     else:
         if not isinstance(data, UVData):
-            uvdata = UVData()
-            uvdata.read(data, read_data=False)
+            uvdata = UVData.from_file(data, read_data=False)
         else:
             uvdata = data
         freq_array = np.unique(uvdata.freq_array)
@@ -194,20 +195,74 @@ def _compute_diffuse_matrix_from_harmonics(
 
 
 def _compute_diffuse_matrix_from_flat_sky(
-    sky_pspec,
-    nside,
-    beam,
-    freq,
-    enu_antpos,
-    ant_1_array,
-    ant_2_array,
-    edges,
-    n_eig=1,
-    lmax=10,
-    pixwgt_datapath=None,
-    bl_convention="i-j",
+    sky_pspec: NDArray[float],
+    nside: int,
+    beam: UVBeam | Type[AnalyticBeam],
+    freq: float,
+    enu_antpos: NDArray[float],
+    ant_1_array: NDArray[int],
+    ant_2_array: NDArray[int],
+    edges: NDArray[int],
+    n_eig: Optional[int] = 1,
+    lmax: Optional[int] = 10,
+    pixwgt_datapath: Optional[str] = None,
+    bl_convention: Optional[str] = "i-j",
 ):
-    """Compute the diffuse matrix assuming we can flat sky the integrals."""
+    """Compute the diffuse matrix assuming we can flat sky the integrals.
+
+    This function computes the diffuse matrix according to the discussion
+    in Section 3.3 of Pascua+ 2025.
+
+    Parameters
+    ----------
+    sky_pspec
+        Angular power spectrum of the diffuse emission on the sky at the
+        provided frequency ``freq``.
+    nside
+        Resolution parameter to use for computing the beam harmonics.
+    freq
+        Observed frequency, in Hz.
+    enu_antpos
+        Antenna positions in local ENU coordinates with shape (Nants, 3).
+    ant_1_array, ant_2_array
+        Index arrays indicating which pair of antennas are used for each
+        baseline.
+    edges
+        Array indicating the start and end of each redundant group.
+    n_eig
+        Number of eigenmodes to use for each redundant block.
+    lmax
+        The maximum multipole to use when evaluating the sum in Equation
+        60 from Pascua+ 2025.
+    pixwgt_datapath
+        Path to files containing the pixel weight arrays used when taking
+        spherical harmonic transformations with `healpy.map2alm`.
+    bl_convention
+        Whether baselines are computed as x_j - x_i or x_i - x_j for
+        baseline (i,j).
+
+    Returns
+    -------
+    diff_mat
+        The diffuse matrix, with shape `(N_baseline, 2*n_eig)`, evaluated
+        at the provided frequency. There are `2*n_eig` columns, since
+        `n_eig` modes are used for each of the real-real and imag-imag
+        covariance components.
+
+    Notes
+    -----
+    The antenna number arrays should be sorted by redundnacy so that 
+    the following is always true:
+        
+    .. code-block:: python
+
+        group_num = <some integer>
+        start, stop = edges[group_num:group_num+2]
+        ai, aj = ant_1_array[start:stop], ant_2_array[start:stop]
+        bl_vecs = enu_antpos[aj] - enu_antpos[ai]
+        np.allclose(bl_vecs[0], bl_vecs)
+    
+    """
     # First, compute the sph. harm. coefficients for the beam-squared.
     pixels = np.arange(healpy.nside2npix(nside))
     theta, phi = healpy.pix2ang(nside, pixels)

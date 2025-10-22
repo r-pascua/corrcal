@@ -1,7 +1,6 @@
 import numpy as np
 import warnings
 
-from typing import Type
 from sparse import SparseCov
 from . import _cfuncs
 from . import linalg
@@ -11,7 +10,7 @@ from . import utils
 
 def nll(
     gains: NDArray[float],
-    cov: Type[SparseCov],
+    cov: SparseCov,
     data: NDArray[float],
     ant_1_inds: NDArray[int],
     ant_2_inds: NDArray[int],
@@ -74,7 +73,7 @@ def nll(
 
 def grad_nll(
     gains: NDArray[float],
-    cov: Type[SparseCov],
+    cov: SparseCov,
     data: NDArray[float],
     ant_1_inds: NDArray[int],
     ant_2_inds: NDArray[int],
