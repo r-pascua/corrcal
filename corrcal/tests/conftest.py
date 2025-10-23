@@ -40,30 +40,27 @@ def min_group_size():
 
 
 @pytest.fixture(scope="session")
-def ant_1_array(array_layout, min_bl_len, min_group_size):
+def red_info(array_layout, min_bl_len, min_group_size):
     return make_groups_from_antpos(
         antpos=array_layout,
         min_bl_len=min_bl_len,
         min_group_size=min_group_size,
-    )[0]
+    )
 
 
 @pytest.fixture(scope="session")
-def ant_2_array(array_layout, min_bl_len, min_group_size):
-    return make_groups_from_antpos(
-        antpos=array_layout,
-        min_bl_len=min_bl_len,
-        min_group_size=min_group_size,
-    )[1]
+def ant_1_array(red_info):
+    return red_info[0]
 
 
 @pytest.fixture(scope="session")
-def edges(array_layout, min_bl_len, min_group_size):
-    return make_groups_from_antpos(
-        antpos=array_layout,
-        min_bl_len=min_bl_len,
-        min_group_size=min_group_size,
-    )[2]
+def ant_2_array(red_info):
+    return red_info[1]
+
+
+@pytest.fixture(scope="session")
+def edges(red_info):
+    return red_info[2]
 
 
 @pytest.fixture(scope="session")

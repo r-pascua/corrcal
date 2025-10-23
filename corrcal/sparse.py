@@ -4,6 +4,7 @@ from copy import deepcopy
 import numpy as np
 from numpy.typing import NDArray
 
+from . import _cfuncs
 from . import linalg
 from . import utils
 
@@ -137,7 +138,7 @@ class SparseCov:
         )
 
 
-    def copy(self) -> SparseCov:
+    def copy(self) -> "SparseCov":
         """Return a copy of the class instance."""
         return SparseCov(
             noise=self.noise.copy(),
@@ -169,7 +170,7 @@ class SparseCov:
         return np.diag(self.noise) + cov
 
 
-    def inv(self, return_det: bool = False) -> SparseCov:
+    def inv(self, return_det: bool = False) -> "SparseCov":
         """Invert the covariance with the Woodbury identity.
 
         Parameters

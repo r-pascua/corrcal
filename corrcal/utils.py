@@ -1,7 +1,7 @@
 import ctypes
 import numpy as np
 from numpy.typing import NDArray
-from typing import Sequence, NoReturn
+from typing import Sequence, NoReturn, Optional
 from . import linalg
 from . import _cfuncs
 

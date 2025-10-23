@@ -8,7 +8,6 @@ import numpy as np
 from numpy.typing import NDArray
 import ctypes
 from typing import Type
-from sparse import SparseCov
 from . import _cfuncs
 from . import utils
 
@@ -218,40 +217,6 @@ def mult_src_blocks_by_diffuse(
     return out
 
 
-def sparse_cov_times_vec(
-        sparse_cov: SparseCov, vec: NDArray[float]
-    ) -> NDArray[float]:
-    """Multiply a vector by a sparse covariance matrix.
-    
-    Parameters
-    ----------
-    sparse_cov
-        Object containing all of the sparse covariance information.
-    vec
-        Vector to multiply by the covariance.
-
-    Returns
-    -------
-    out
-        Product of the covariance matrix and the provided vector.
-    """
-    out = np.zeros_like(vec)
-    _cfuncs.sparse_cov_times_vec(
-        sparse_cov.noise.ctypes.data,
-        sparse_cov.diff_mat.ctypes.data,
-        sparse_cov.src_mat.ctypes.data,
-        sparse_cov.n_bls,
-        sparse_cov.n_eig,
-        sparse_cov.n_src,
-        sparse_cov.n_grp,
-        sparse_cov.edges.ctypes.data,
-        sparse_cov.isinv,
-        vec.ctypes.data,
-        out.ctypes.data,
-    )
-    return out
-
-
 def make_small_blocks(
     noise_diag: NDArray[float], diff_mat: NDArray[float], edges: NDArray[int]
 ) -> NDArray[float]:
@@ -304,3 +269,37 @@ def sum_diags(blocks: NDArray[float]) -> float:
     """
     n_grps, n_eig = blocks.shape[:2]
     return _cfuncs.sum_diags(blocks.ctypes.data, int(n_grps), int(n_eig))
+
+
+def sparse_cov_times_vec(
+    sparse_cov: "SparseCov", vec: NDArray[float]
+) -> NDArray[float]:
+    """Multiply a vector by a sparse covariance matrix.
+    
+    Parameters
+    ----------
+    sparse_cov
+        Object containing all of the sparse covariance information.
+    vec
+        Vector to multiply by the covariance.
+
+    Returns
+    -------
+    out
+        Product of the covariance matrix and the provided vector.
+    """
+    out = np.zeros_like(vec)
+    _cfuncs.sparse_cov_times_vec(
+        sparse_cov.noise.ctypes.data,
+        sparse_cov.diff_mat.ctypes.data,
+        sparse_cov.src_mat.ctypes.data,
+        sparse_cov.n_bls,
+        sparse_cov.n_eig,
+        sparse_cov.n_src,
+        sparse_cov.n_grp,
+        sparse_cov.edges.ctypes.data,
+        sparse_cov.isinv,
+        vec.ctypes.data,
+        out.ctypes.data,
+    )
+    return out

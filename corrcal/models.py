@@ -5,9 +5,9 @@ import numpy as np
 from numpy.typing import NDArray
 from typing import Optional, Type
 from pathlib import Path
-from pyuvdata import UVBeam, UVData, AnalyticBeam
+from pyuvdata import UVBeam, UVData
+from pyuvdata.analytic_beam import AnalyticBeam
 from pyradiosky import SkyModel
-from .covdata import UVCov
 from . import utils
 from scipy.special import spherical_jn, sph_harm_y
 

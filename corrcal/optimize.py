@@ -1,10 +1,10 @@
 import numpy as np
 import warnings
 
-from sparse import SparseCov
+from numpy.typing import NDArray
+from .sparse import SparseCov
 from . import _cfuncs
 from . import linalg
-from . import sparse
 from . import utils
 
 
