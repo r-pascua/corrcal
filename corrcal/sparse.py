@@ -274,3 +274,120 @@ class SparseCov:
     def _full_inv(self, return_det=False):
         """Inversion routine for non-block-diagonal diffuse matrix."""
         raise NotImplementedError("Work in progress.")
+
+
+class ModelCov:
+	"""TBD"""
+
+	def __init__(
+		self,
+		freq_array: Optional[NDArray[float]] = None,
+		lst_array: Optional[NDArray[float]] = None,
+		pol_array: Optional[NDArray[str] | NDArray[int]] = None,
+		array_layout: Optional[dict[int,NDArray[float]]] = None,
+		ant_1_array: Optional[NDArray[int]] = None,
+		ant_2_array: Optional[NDArray[int]] = None,
+		edges: Optional[NDArray[int]] = None,
+		src_mats: Optional[NDArray[float]] = None,
+		diff_mats: Optional[NDArray[float]] = None,
+		noise_diags: Optional[NDArray[float]] = None,
+	):
+		self.freq_array = freq_array
+		self.lst_array = lst_array
+		self.pol_array = pol_array
+		self.array_layout = array_layout
+		self.ant_1_array = ant_1_array
+		self.ant_2_array = ant_2_array
+		self.edges = edges
+		self.src_mats = src_mats
+		self.diff_mats = diff_mats
+		self.noise_diags = noise_diags
+
+	def select(
+		self,
+		antennas: Optional[NDArray[int]] = None,
+		baselines: Sequence[tuple[int,int]] = None,
+		polarizations: Optional[NDArray[str] | NDArray[int]] = None,
+		**kwds
+	):
+		pass
+
+	def _baseline_select(
+		self,
+		baselines: Sequence[tuple[int,int]],
+		min_group_size: Optional[int] = 1,
+	):
+		"""Remove attribute components not in the provided baselines."""
+		baselines = set(baselines)  # For faster lookup
+		select = []
+		new_edges = [0,]
+		edge_iter = zip(self.edges//2, self.edges[1::]//2)
+		for grp, (start, stop) in enumerate(edge_iter):
+			ai_here = ant_1_array[start:stop]
+			aj_here = ant_2_array[start:stop]
+
+			count = 0
+			for bl in zip(ant_1_array[start:stop], ant_2_array[start:stop]):
+				keep = (bl in baselines) or (bl[::-1] in baselines)
+				count += 2 * int(keep)
+				select += 2 * [keep,]
+
+			if count:
+				new_edges.append(new_edges[-1] + count)
+			
+		self._apply_baseline_select(np.asarray(select))
+		self.edges = np.array(new_edges)
+
+		if min_group_size > 1:
+			self._remove_small_groups(min_group_size)
+
+	def _apply_baseline_select(self, select: NDArray[bool]):
+		"""Apply baseline downselection to all relevant arrays."""
+		self.diff_mat = self.diff_mat[...,select]
+		self.src_mat = self.src_mat[...,select]
+		self.ant_1_array = self.ant_1_array[select[::2]]
+		self.ant_2_array = self.ant_2_array[select[::2]]
+		if self.noise_diags is not None:
+			self.noise_diags = self.noise_diags[...,select]
+
+	def _remove_small_groups(self, min_group_size: int):
+		"""Remove any baseline group smaller than requested size."""
+		group_sizes = np.diff(self.edges) // 2
+		keep_group = group_sizes >= min_group_size
+		if keep_group.all():
+			return  # Nothing to do, since every group is big enough
+
+		select = np.zeros(2*self.ant_1_array.size)
+		for grp, (start, stop) in enumerate(zip(edges, edges[1:])):
+			select[start:stop] = keep_group[grp]
+
+		self.edges = np.cumsum(self.edges[keep_group])
+
+	def interp(
+		self,
+		freq_array: Optional[NDArray[float]] = None,
+		lst_array: Optional[NDArray[float]] = None,
+		inplace: bool = False,
+	) -> "ModelCov" | None:
+		pass
+
+	def write(
+		self,
+		filename: str,
+		clobber: bool = False,
+	):
+		pass
+
+	def read(
+		self,
+		filename: str,
+		**select_kwds
+	):
+		pass
+
+	@classmethod
+	def from_file(
+		filename: str,
+		**select_kwds
+	) -> "ModelCov":
+		pass
