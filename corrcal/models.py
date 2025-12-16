@@ -1,28 +1,40 @@
 """Module for calculating model covariance."""
 from astropy import constants, units
+from astropy.coordinates import Latitude, Longitude, AltAz
+from astropy.coordinates import EarthLocation, SkyCoord
+from astropy.time import Time
 import healpy
 import numpy as np
 from numpy.typing import NDArray
-from typing import Optional, Type
+from typing import Type
 from pathlib import Path
-from pyuvdata import UVBeam, UVData
+from pyuvdata import UVBeam, UVData, BeamInterface
 from pyuvdata.analytic_beam import AnalyticBeam
 from pyradiosky import SkyModel
 from . import utils
 from scipy.special import spherical_jn, sph_harm_y
 
 
-def build_source_model(
+def build_source_matrix(
     *,
-    freq_array: Optional[NDArray[float]] = None,
-    lst_array: Optional[NDArray[float]] = None,
-    time_array: Optional[NDArray[float]] = None,
-    telescope_location: Optional[NDArray[float]] = None,
-    baselines: Optional[NDArray[float]] = None,
-    data: Optional[UVData | str] = None,
-    beam: UVBeam | Type[AnalyticBeam] | str = None,
-    sources: SkyModel = None,
-) -> np.ndarray:
+    freq_array: NDArray[float] | None = None,
+    lst_array: NDArray[float] | None = None,
+    time_array: NDArray[float] | None = None,
+    pol_array: NDArray[str] | None = None,
+    telescope_location: NDArray[float] | EarthLocation | None = None,
+    baseline_array: NDArray[float] | None = None,
+    uvdata: UVData | str | None = None,
+    beam: UVBeam | Type[AnalyticBeam] | str | None = None,
+    Nsrc: int = 1,
+    source_model: SkyModel | None = None,
+    fluxes: NDArray[float] | None = None,
+    src_ra: NDArray[float] | None = None,
+    src_dec: NDArray[float] | None = None,
+    spec_inds: NDArray[float] | None = None,
+    ref_freqs: NDArray[float] | None = None,
+    bright_source_cutoff: float = 100,
+    altitude_cutoff: float = 80,
+) -> NDArray[float]:
     r"""Construct the point-source matrix.
 
 
@@ -43,77 +55,120 @@ def build_source_model(
     ----------
     freq_array
         Frequencies, in Hz, at which to evaluate the beam/source models.
-        Does not need to be provided if ``data`` is provided.
+        Does not need to be provided if ``uvdata`` is provided.
     lst_array
         Local Sidereal Time for each observation, in radians. Does not need
-        to be provided if ``data`` is provided.
+        to be provided if ``uvdata`` is provided.
     time_array
-        Observation times, in JD. Does not need to be provided if ``data``
+        Observation times, in JD. Does not need to be provided if ``uvdata``
         is provided.
+    pol_array
+        Array indicating which visibility polarizations to use. Does not need
+        to be provided if ``uvdata`` is provided.
     telescope_location
         Latitude, longitude, in radians, and altitude, in meters, of the
-        telescope site. Does not need to be provided if ``data`` is provided.
+        telescope site. Does not need to be provided if ``uvdata`` is provided.
     baseline_array
         Array containing the baseline vectors for the entire array, in units
-        of meters. Does not need to be provided if ``data`` is provided.
+        of meters. Does not need to be provided if ``uvdata`` is provided.
         Should be shape (Nbls,3) and in topocentric (ENU) coordinates.
-    data
-        ``UVData`` object or path to a file that can be loaded into a
-        ``UVData`` object. Does not need to be provided if ``freq_array``,
-        ``telescope_location``, and either ``lst_array`` or ``time_array`` are
-        all provided.
+    uvdata
+        ``pyuvdata.UVData`` object or path to a file that can be loaded into a
+        ``pyuvdata.UVData`` object. Does not need to be provided if
+        ``freq_array``, ``telescope_location``, and either ``lst_array``
+        or ``time_array`` are all provided.
     beam
-        ``UVBeam`` object or path to a file that can be loaded into a
-        ``UVBeam`` object.
-    sources
-        ``SkyModel`` object containing information about the point source
-        catalog (positions, fluxes, etc). Some pre-processing should be done
-        on this so that only a handful of sources are present. The source
-        positions should be provided in (RA,dec) coordinates.
+        The beam model to be used for computing the perceived source fluxes.
+        May be provided as a ``pyuvdata.UVBeam`` object, a path to a file that
+        may be read into a ``pyuvdata.UVBeam`` object, or a
+        ``pyuvdata.AnalyticBeam`` object.
+    Nsrc
+        Number of sources to use for calibration. The top ``n_src``
+        contributors to the observed source flux will be used for building
+        the source matrix. The default option is to use the brightest source.
+    source_model
+        ``pyradiosky.SkyModel`` object containing information about the point
+        source catalog (positions, fluxes, etc). Some pre-processing should be
+        done on this so that only a handful of sources are present. The source
+        positions should be provided in (RA,dec) coordinates in the J2000 epoch.
+        Not required if enough information is provided to construct the source
+        catalog (see documentation for the ``fluxes``, ``src_ra``, and
+        ``src_dec`` arguments).
+    fluxes
+        The source fluxes, in Janskys, either at the corresponding reference
+        frequencies (when providing spectral indices) or at the measured
+        frequencies in ``freq_array``. Not required if ``source_model`` is
+        provided. If ``ref_freqs`` and ``spec_inds`` are provided, then it
+        is assumed that each source flux evolves as a power law in frequency;
+        otherwise the provided ``fluxes`` must provide the source flux at each
+        frequency in ``freq_array`` with shape ``(freq_array.size, cat_size)``,
+        where ``cat_size`` is the total number of sources provided.
+    src_ra
+        Right ascension of each source measured in the J2000 epoch in units
+        of radians. Not required if ``source_model`` is provided.
+    src_dec
+        Declination of each source measured in the J2000 epoch in units of
+        radians. Not required if ``source_model`` is provided.
+    spec_inds
+        Spectral index of each source, if source fluxes are provided only at
+        a single frequency. Not required if ``source_model`` is provided or if
+        source fluxes are provided for each frequency in ``freq_array``.
+    ref_freqs
+        Reference frequency for each source flux if source spectral evolution
+        is treated as a power law. Only required if ``spec_inds`` is provided.
+    bright_source_cutoff
+        Minimum band-averaged flux density, in Janskys, required for a source
+        to always be considered a candidate for calibration when it is above
+        the horizon. Default is 100 Jy.
+    altitude_cutoff
+        Altitude below which sources should not be considered as calibration
+        candidates, measured in degrees. This should roughly be set to the
+        width of the primary beam main lobe. Default is 10 degrees.
+
 
     Returns
     -------
-    source_model
-        Array with shape (Ntimes, Nfreqs, Npols, Nbls, Nsrc) representing the
+    source_matrix
+        Array with shape (Ntimes, Nfreqs, Npols, 2*Nbls, Nsrc) representing the
         :math:`\Sigma` matrix from Equation 26 of Pascua+ 2025 at each time,
         frequency, and polarization.
 
     Notes
     -----
-    The calculated array will *not* be sorted by redundancy. In order to use
-    the output of this function to create a ``UVCov`` object, you must sort
-    the array appropriately after it is calculated (or provided a sorted
-    baseline array or ``UVData`` object that has had its metadata adjusted in
-    accordance with a grouping by redundancy). For the greatest control, it is
-    recommended to provide a ``UVData`` object that has already had a number
-    of adjustments made based on its metadata.
+    This calculation is currently tuned for zenith-pointing arrays. Support
+    for off-zenith pointings will be supported in a future update.
+
+    The baseline axis of the source matrix is sorted according to however the
+    provided ``baseline_array`` is sorted. If the source matrix is constructed
+    from a ``pyuvdata.UVData`` object, then the baseline axis sorting is
+    determined by however the baselines are sorted in the ``pyuvdata.UVData``
+    object.
     """
     # Setup
-    if beam is None or sources is None:
-        raise ValueError(
-            "Both a beam model and source model must be provided."
-        )
+    if beam is None:
+        raise ValueError("A beam model must be provided.")
 
-    if data is None:
+    if uvdata is None:
         freqs_ok = isinstance(freq_array, np.ndarray)
-        times_ok = isinstance(lst_array, np.ndarray) or isinstance(
+        times_ok = isinstance(lst_array, np.ndarray) and isinstance(
             time_array, np.ndarray
         )
-        loc_ok = isinstance(telescope_location, np.ndarray)
-        bls_ok = isinstance(baselines, np.ndarray)
-        if not all(freqs_ok, times_ok, loc_ok, bls_ok):
+        loc_ok = isinstance(telescope_location, (np.ndarray, EarthLocation))
+        bls_ok = isinstance(
+            baseline_array, np.ndarray
+        ) and baseline_array.shape[1] == 3
+        pols_ok = isinstance(pol_array, np.ndarray)
+        if not all(freqs_ok, times_ok, loc_ok, bls_ok, pols_ok):
             raise ValueError(
                 "Not enough information provided to construct model."
             )
-    else:
-        if not isinstance(data, UVData):
-            uvdata = UVData.from_file(data, read_data=False)
-        else:
-            uvdata = data
+    elif isinstance(uvdata, (str, UVData)):
+        if not isinstance(uvdata, UVData):
+            uvdata = UVData.from_file(uvdata, read_data=False)
         freq_array = np.unique(uvdata.freq_array)
-        lst_array = uvdata.lst_array[
-            np.unique(uvdata.time_array, return_index=True)[1]
-        ]
+        time_array, inds = np.unique(uvdata.time_array, return_index=True)
+        lst_array = uvdata.lst_array[inds]
+        pol_array = np.array(uvdata.get_pols())
         telescope_location = uvdata.telescope_lat_lon_alt
         baseline_array = np.zeros((uvdata.Nbls, 3), dtype=float)
         antpos, antnums = uvdata.get_ENU_baselines()
@@ -124,13 +179,132 @@ def build_source_model(
             antnums=antnums,
         )
         _ = len(baseline_array)  # Just to make flake8 not complain.
-
-    if not isinstance(beam, UVBeam):
-        uvbeam = UVBeam()
-        uvbeam.read(beam)
     else:
-        uvbeam = beam.copy()
+        raise ValueError(
+            "Not enough telescope information provided to construct model."
+        )
 
+    if source_model is None:
+        if any(arg is None for arg in (fluxes, src_ra, src_dec)):
+            raise ValueError("Insufficient source information provided.")
+        fluxes = np.atleast_2d(fluxes)
+        if fluxes.shape[0] == 1 and freq_array.size != 1:
+            if spec_inds is None and ref_freqs is None:
+                raise ValueError(
+                    "When providing sources for a single frequency, spectral "
+                    "indices and reference frequencies must also be provided."
+                )
+            freq_scaling = (
+                freq_array[:,None] / ref_freqs[None,:]
+            ) ** spec_inds[None,:]
+            fluxes = fluxes * freq_scaling
+        elif fluxes.shape[0] != freq_array.size:
+            raise ValueError(
+                "Provided fluxes array does not conform to the expected shape."
+            )
+    else:
+        source_model = source_model.at_frequencies(
+            freq_array*units.Hz, inplace=False
+        )
+        fluxes = source_model.stokes[0].to(units.Jy).value  # Only use Stokes-I
+        src_ra = source_model.ra.to(units.rad).value
+        src_dec = source_model.ra.to(units.rad).value
+
+    if not isinstance(beam, (UVBeam, AnalyticBeam)):
+        beam = UVBeam.from_file(beam)
+
+    # Convert to a power beam; this will need to change for polarized CorrCal.
+    beam = BeamInterface(beam).as_power_beam(include_cross_pols=True)
+
+    # Everything should be OK to use at this point, so start computing things.
+    if isinstance(telescope_location, np.ndarray):
+        telescope_location = EarthLocation(*telescope_location)
+
+    # Initialize the source matrix.
+    Ntimes = time_array.size
+    Nfreqs = freq_array.size
+    Npols = pol_array.size
+    Nbls = baseline_array.shape[0]
+    source_matrix = np.zeros((Ntimes, Nfreqs, Npols, 2*Nbls, Nsrc), dtype=float)
+
+    # Figure out which sources to always consider as candidates when they're up
+    is_bright = fluxes.mean(axis=0) > bright_source_cutoff
+
+    # Fill in the source matrix time by time.
+    for t, obstime in enumerate(time_array):
+        # Convert source positions to local Altitude-Azimuth coordinates.
+        local_frame = AltAz(
+            location=telescope_location, obstime=Time(obstime, format="jd")
+        )
+        source_positions = SkyCoord(
+            Longitude(src_ra*units.rad),
+            Latitude(src_dec*units.rad),
+            frame="icrs",
+        ).transform_to(local_frame)
+
+        # Choose which sources to keep as calibration candidates.
+        above_horizon = source_positions.alt > 0
+        near_zenith = source_positions.alt.deg > altitude_cutoff
+        select = near_zenith | (above_horizon & is_bright)
+
+        # Compute apparent flux for each calibration candidate.
+        src_az = Longitude(
+            np.pi/2*units.rad - source_positions.az
+        )[select].to(units.rad).value  # astropy -> pyuvdata az convention
+        src_za = np.pi/2 - source_positions.alt.rad[select]
+        src_flux = fluxes[select]
+        beam_vals = beam.compute_response(
+            az_array=src_az,
+            za_array=src_za,
+            freq_array=freq_array,
+            az_za_grid=False,
+            freq_interp_kind="cubic",
+            reuse_spline=True,
+        )[0]  # Output shape is (1, Npol, Nfreq, Nsrc) for power beam.
+        weighted_fluxes = beam_vals * src_flux[None]
+
+        # Use band-averaged pI flux to choose calibration sources, if possible.
+        beam_pols = beam.polarization_array
+        if beam_pols.size == 1:
+            pol_select = slice()
+        elif 1 in beam_pols:  # 1 is Stokes-I
+            pol_select = np.argwhere(beam_pols == 1)
+        elif -5 in beam_pols or -6 in beam_pols:  # -5 = XX, -6 = YY
+            pol_select = np.argwhere(beam_pols == -5) | np.argwhere(
+                beam_pols == -6
+            )
+        elif -1 in beam_pols or -2 in beam_pols:  # -1 = RR, -2 = LL
+            pol_select = np.argwhere(beam_pols == -1) | np.argwhere(
+                beam_pols == -2
+            )
+        else:  # only have cross-polarized beam available, just use one
+            pol_select = slice(None,1)
+        cal_src = np.argsort(
+            weighted_fluxes[pol_select].sum(axis=0).mean(axis=0)
+        )[::-1][:Nsrc]
+        src_az = src_az[cal_src]
+        src_za = src_za[cal_src]
+        weighted_fluxes = weighted_fluxes[:,:,cal_src].transpose(1,0,2)
+        # The transpose reorders the fluxes to (freq,pol,src).
+
+        # Now compute the fringe factors.
+        wavelengths = constants.c.si.value / freq_array
+        uvws = baseline_array[None] / wavelengths[:,None,None]
+        src_nhat = np.array(
+            [
+                np.sin(src_za)*np.cos(src_az),
+                np.sin(src_za)*np.sin(src_az),
+                np.sin(src_za),
+            ]
+        )
+        src_fringe = np.exp(-2j * np.pi * uvws @ src_nhat)  # (freq,bl,src)
+        
+        # Finally, compute the visibilities and populate the source matrix.
+        src_vis = weighted_fluxes[:,:,None,:] * src_fringe[:,None,:,:]
+        source_matrix[t,:,:,::2,:] = src_vis.real
+        source_matrix[t,:,:,1::2,:] = src_vis.imag
+
+    return source_matrix
 
 def compute_diffuse_matrix(
     Tsky,
@@ -203,11 +377,11 @@ def _compute_diffuse_matrix_from_flat_sky(
     ant_1_array: NDArray[int],
     ant_2_array: NDArray[int],
     edges: NDArray[int],
-    n_eig: Optional[int] = 1,
-    lmax: Optional[int] = 10,
-    pixwgt_datapath: Optional[str] = None,
-    bl_convention: Optional[str] = "i-j",
-):
+    n_eig: int | None = 1,
+    lmax: int | None = 10,
+    pixwgt_datapath: str | None = None,
+    bl_convention: str | None = "i-j",
+) -> NDArray[float]:
     """Compute the diffuse matrix assuming we can flat sky the integrals.
 
     This function computes the diffuse matrix according to the discussion
