@@ -3,6 +3,7 @@ import logging
 
 from . import calibrate
 from . import _cfuncs
+from . import gridding
 from . import linalg
 from . import models
 from . import optimize

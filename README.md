@@ -1,20 +1,18 @@
 # corrcal
 
-[high-level description]
+The `corrcal` package provides low-level interfaces necessary for implementing
+*Corr*elation *Cal*ibration. Some simulation scripts, tutorial notebooks, and
+routines for various interferometric arrays are also provided.
+
+## Package Details
+
 
 ## Installation
 
-Basic installation instructions, with all of the dependencies. Note
-that this is designed for use on Linux distributions and has not been
-tested on Windows or MacOS. First, clone the repository via
-```
-git clone https://github.com/r-pascua/corrcal.git
-```
-and move into the new `corrcal` directory. To create a fresh environment
-for e.g. developing, do
-```
-conda env create -f ci/tests.yaml [-n env_name]
-pip install [-e] .
-```
-The `-n` flag should come *after* the configuration file specification.
-The `-e` flag should be used if you intend to do any development work.
+This package has been developed for use on Unix-like machines, and has not
+been tested on Windows machines. The simplest way to install `corrcal` is by
+installing the latest released version via `pip install corrcal`. You may
+alternatively clone the repository, navigate to the local clone, and install
+from the top-level directory, provided you have the relevant dependencies:
+
+## Dependencies

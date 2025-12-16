@@ -5,6 +5,9 @@ import yaml
 from pyuvdata import UVData, UVCal
 from scipy.optimize import fmin_cg, minimize
 
+from typing import Optional
+from numpy.typing import NDArray
+
 from . import optimize, utils
 from .sparse import SparseCov
 

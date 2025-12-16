@@ -1,5 +1,6 @@
 import ctypes
 import numpy as np
+from pathlib import Path
 from numpy.typing import NDArray
 from typing import Sequence, NoReturn, Optional
 from . import linalg
@@ -117,3 +118,60 @@ def comply_shape(mat: NDArray[float]) -> NoReturn:
     """Check that the provided array has the right shape."""
     if mat.shape[-1] != mat.shape[-2]:
         raise ValueError("Array is not square!")
+
+
+def fetch_models(
+	data_lsts: NDArray[float], model_cov_dir: Path, file_prototype: str
+) -> list[Path]:
+	"""
+	Retrieve relevant model files provided observed LSTs.
+
+	Parameters
+	----------
+	data_lsts
+		Observed Local Sidereal Times, in radians.
+	model_cov_dir
+		Where the model covariance files are located on the filesystem.
+	file_prototype
+		Glob-parsable string that may be used to fetch model files.
+
+	Returns
+	-------
+	cov_files
+		List of files containing relevant model covariance.
+
+	Notes
+	-----
+	This function assumes that the model covariance files indicate the
+	first LST, in radians, in the file in the file names themselves, with
+	the phase wrap occurring at 2pi. More precisely, this function looks
+	for the substring "\d.\d+" in the model covariance file name and assumes
+	that the first instance of this substring indicates the file start LST.
+	"""
+	all_model_files = sorted(model_cov_dir.glob(file_prototype))
+	start_lsts = np.array(
+		[float(re.findall("\d.\d+", fn.name)[0]) for fn in all_model_files]
+	)
+
+	# Find the nearest file preceding the first LST in the data.
+	model_phasors = np.exp(1j * start_lsts)
+	start_dlst = np.angle(model_phasors * np.exp(-1j*data_lsts[0]))
+	start = np.argmin(np.abs(start_dlst))
+	if start_dlst[start] > 0:
+		start -= 1
+
+	# Now find the nearest file following the last LST in the data.
+	end_dlst = np.angle(model_phasors * np.exp(-1j*data_lsts[-1]))
+	end = np.argmin(np.abs(end_dlst))
+	if end_dlst[end] < 0:
+		end += 1
+
+	# Retrieve the model files.
+	if start == -1:
+		return all_model_files[-1:] + all_model_files[:end+1]
+	elif end == len(all_model_files):
+		return all_model_files[start:] + all_model_files[:2]
+	elif stop < start:
+		return all_model_files[start:] + all_model_files[:end+1]
+	else:
+		return all_model_files[start:end+1]

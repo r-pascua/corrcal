@@ -3,6 +3,7 @@ from copy import deepcopy
 
 import numpy as np
 from numpy.typing import NDArray
+from typing import Optional, Sequence
 
 from . import _cfuncs
 from . import linalg
@@ -277,7 +278,38 @@ class SparseCov:
 
 
 class ModelCov:
-	"""TBD"""
+	"""Class for managing models at many times/frequencies.
+
+	This class provides a helpful interface for various operations one
+	may want to apply to model covariance matrices in practical applications
+	of CorrCal, including array downselection and file I/O.
+	
+	Attributes
+	----------
+	freq_array
+		Frequency at which each model covariance is evaluated, in Hz.
+	lst_array
+		Local Sidereal Time at which each model covariance is evaluated,
+		in radians.
+	pol_array
+		Visibility polarizations included in the model, provided either
+		as strings or AIPS polarization integers.
+	array_layout
+		Mapping from antenna numbers to antenna positions, in meters.
+	ant_1_array, ant_2_array
+		Index arrays mapping baseline indices to antenna pairs.
+	edges
+		Array indicating the start and end of each redundant group.
+	src_mats
+		Source matrix for each LST, frequency, and polarization, with
+		shape ``(n_lst, n_freq, n_pol, n_bls, n_src)``.
+	diff_mats
+		Diffuse matrix for each LST, frequency, and polarization, with
+		shape ``(n_lst, n_freq, n_pol, n_bls, n_eig)``.
+	noise_diags
+		Diagonal of noise covariance for each LST, frequency, and
+		polarization, with shape ``(n_lst, n_freq, n_pol, n_bls)``.
+	"""
 
 	def __init__(
 		self,
@@ -303,14 +335,35 @@ class ModelCov:
 		self.diff_mats = diff_mats
 		self.noise_diags = noise_diags
 
+	@property
+	def n_bls(self):
+		return self.ant_1_array.size
+
 	def select(
 		self,
 		antennas: Optional[NDArray[int]] = None,
 		baselines: Sequence[tuple[int,int]] = None,
 		polarizations: Optional[NDArray[str] | NDArray[int]] = None,
-		**kwds
+		frequencies: Optional[NDArray[float]] = None,
+		freq_chans: Optional[NDArray[int]] = None,
+		lsts: Optional[NDArray[float]] = None,
+		min_group_size: Optional[int] = 1,
 	):
-		pass
+		if antennas is not None:
+			self._antenna_select(antennas, min_group_size)
+		if baselines is not None:
+			self._baseline_select(baselines, min_group_size)
+		if polarizations is not None:
+			self._polarization_select(polarizations)
+		if (frequencies is not None) or (freq_chans is not None):
+			self._freq_select(
+				frequencies=frequencies, freq_chans=freq_chans
+			)
+		if lsts is not None:
+			self._lst_select(lsts)
+		if min_group_size > 1:
+			self._remove_small_groups(min_group_size)
+
 
 	def _baseline_select(
 		self,
@@ -321,11 +374,8 @@ class ModelCov:
 		baselines = set(baselines)  # For faster lookup
 		select = []
 		new_edges = [0,]
-		edge_iter = zip(self.edges//2, self.edges[1::]//2)
+		edge_iter = zip(self.edges//2, self.edges[1:]//2)
 		for grp, (start, stop) in enumerate(edge_iter):
-			ai_here = ant_1_array[start:stop]
-			aj_here = ant_2_array[start:stop]
-
 			count = 0
 			for bl in zip(ant_1_array[start:stop], ant_2_array[start:stop]):
 				keep = (bl in baselines) or (bl[::-1] in baselines)
@@ -341,14 +391,43 @@ class ModelCov:
 		if min_group_size > 1:
 			self._remove_small_groups(min_group_size)
 
+	def _antenna_select(
+		self, antennas: Sequence[int], min_group_size: int = 1
+	):
+		"""
+		Remove all antennas not contained in the provided set of antennas.
+		"""
+		antennas = set(antennas)  # For faster lookup
+		select = []
+		new_edges = [0,]
+		edge_iter = zip(self.edges//2, self.edges[1:]//2)
+		for grp, (start, stop) in enumerate(edge_iter):
+			ai_here = ant_1_array[start:stop]
+			aj_here = ant_2_array[start:stop]
+
+			count = 0
+			for ai, aj in zip(ai_here, aj_here):
+				keep = (ai in antennas) and (aj in antennas)
+				count += 2 * int(keep)
+				select += 2 * [keep,]
+
+			if count:
+				new_edges.append(new_edges[-1] + count)
+
+		self._apply_baseline_select(np.asarray(select))
+		self.edges = np.array(new_edges)
+
+		if min_group_size > 1:
+			self._remove_small_groups(min_group_size)
+
 	def _apply_baseline_select(self, select: NDArray[bool]):
 		"""Apply baseline downselection to all relevant arrays."""
-		self.diff_mat = self.diff_mat[...,select]
-		self.src_mat = self.src_mat[...,select]
-		self.ant_1_array = self.ant_1_array[select[::2]]
-		self.ant_2_array = self.ant_2_array[select[::2]]
+		self.diff_mats = self.diff_mats[...,select,:].copy()
+		self.src_mats = self.src_mats[...,select,:].copy()
+		self.ant_1_array = self.ant_1_array[select[::2]].copy()
+		self.ant_2_array = self.ant_2_array[select[::2]].copy()
 		if self.noise_diags is not None:
-			self.noise_diags = self.noise_diags[...,select]
+			self.noise_diags = self.noise_diags[...,select].copy()
 
 	def _remove_small_groups(self, min_group_size: int):
 		"""Remove any baseline group smaller than requested size."""
@@ -361,14 +440,54 @@ class ModelCov:
 		for grp, (start, stop) in enumerate(zip(edges, edges[1:])):
 			select[start:stop] = keep_group[grp]
 
+		self._apply_baseline_select(select)
 		self.edges = np.cumsum(self.edges[keep_group])
+
+	def _freq_select(
+		self,
+		frequencies: Optional[NDArray[float]] = None,
+		freq_chans: Optional[NDArray[int]] = None,
+		tol: Optional[float] = 100,
+	):
+		if (frequencies is None) and (freq_chans is None):
+			return  # Nothing to do
+
+		if frequencies is not None:
+			freq_chans = []
+			for freq in frequencies:
+				is_close = np.abs(np.diff(self.freq_array - freq)) < tol
+				if is_close.any():
+					freq_chans.append(np.argwhere(is_close).flatten()[0])
+			freq_chans = np.array(freq_chans)
+
+		self.freq_array = self.freq_array[freq_chans].copy()
+		self.diff_mats = self.diff_mats[:,freq_chans].copy()
+		self.src_mats = self.src_mats[:,freq_chans].copy()
+		if self.noise_diags is not None:
+			self.noise_diags = self.noise_diags[:,freq_chans].copy()
+
+	def _lst_select(
+		self, lsts: NDArray[float], tol: Optional[float] = 1e-5
+	):
+		select = []
+		for lst in lsts:
+			is_close = np.abs(np.diff(self.lst_array - lst)) < tol
+			if is_close.any():
+				select.append(np.argwhere(is_close).flatten()[0])
+
+		select = np.asarray(select)
+		self.lst_array = self.lst_array[select].copy()
+		self.diff_mats = self.diff_mats[select].copy()
+		self.src_mats = self.src_mats[select].copy()
+		if self.noise_diags is not None:
+			self.noise_diags = self.noise_diags[select].copy()
 
 	def interp(
 		self,
 		freq_array: Optional[NDArray[float]] = None,
 		lst_array: Optional[NDArray[float]] = None,
 		inplace: bool = False,
-	) -> "ModelCov" | None:
+	):  # TODO: figure out how to make the typing work here
 		pass
 
 	def write(
