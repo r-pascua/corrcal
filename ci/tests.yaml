@@ -13,6 +13,3 @@ dependencies:
     - python
     - pyuvdata
     - scipy>=1.4.1
-    - pip:
-        - hera-calibration
-        - uvtools
