@@ -163,7 +163,7 @@ if __name__ == "__main__":
 
     # Update the sky power spectrum appropriately.
     K_to_Jy = 1 / hera_sim.utils.jansky_to_kelvin(freq/1e9, 1)
-    sky_pspec[0] += 4 * np.pi * offset**2
+    sky_pspec[0] += offset**2
     sky_pspec *= (rescaling * K_to_Jy / 2) ** 2
 
     # Prepare the diffuse sky model.
