@@ -2,7 +2,6 @@ import numpy as np
 import warnings
 import yaml
 
-from pyuvdata import UVData, UVCal
 from scipy.optimize import fmin_cg, minimize
 
 from typing import Optional
@@ -11,6 +10,11 @@ from numpy.typing import NDArray
 from . import optimize, utils
 from .sparse import SparseCov
 
+try:
+    from pyuvdata import UVData, UVCal
+    HAVE_PYUVDATA = True
+except ImportError:
+    HAVE_PYUVDATA = False
 
 class CorrCal:
     """Interface for running Correlation Calibration.
@@ -136,6 +140,10 @@ class CorrCal:
         self.cov = cov.cov  # TODO: decide on a convention for this
 
     def _populate_from_hera_data(self, uvdata, uvcal, uvcov):
+        if not HAVE_PYVDATA:
+            raise NotImplementedError(
+                "pyuvdata must be installed to read HERA data."
+            )
         # Assume we're using UVData/UVCal objects.
         uvdata = self._load_uvdata(uvdata)
         uvcal = self._load_uvcal(uvcal)
