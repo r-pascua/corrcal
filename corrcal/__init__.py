@@ -1,6 +1,7 @@
 from pathlib import Path
 import logging
 
+from . import beams
 from . import calibrate
 from . import _cfuncs
 from . import gridding
