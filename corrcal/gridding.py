@@ -2,18 +2,6 @@ import numpy as np
 from numpy.typing import NDArray
 from typing import Sequence, Optional
 
-try:
-    import hera_cal
-
-    HERA_CAL = True
-except (ImportError, FileNotFoundError) as err:  # pragma: no cover
-    if isinstance(err, ImportError):
-        missing = "hera_cal"
-    else:
-        missing = "git"
-    print(f"{missing} is not installed. Some gridding features unavailable.")
-    HERA_CAL = False
-
 def parse_reds(
     reds: Sequence[Sequence[tuple[int,int]]],
     bl_lens: Sequence[float],

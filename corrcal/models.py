@@ -1,19 +1,39 @@
 """Module for calculating model covariance."""
-from astropy import constants, units
-from astropy.coordinates import Latitude, Longitude, AltAz
-from astropy.coordinates import EarthLocation, SkyCoord
-from astropy.time import Time
-import healpy
 import numpy as np
 from numpy.typing import NDArray
 from typing import Type
 from pathlib import Path
-from pyuvdata import UVBeam, UVData, BeamInterface
-from pyuvdata.analytic_beam import AnalyticBeam
-from pyradiosky import SkyModel
+
 from . import utils
 from scipy.special import spherical_jn, sph_harm_y
 
+try:
+    from pyuvdata import UVBeam, UVData, BeamInterface
+    from pyuvdata.analytic_beam import AnalyticBeam
+    HAVE_PYUVDATA = True
+except ImportError:
+    HAVE_PYVDATA = False
+
+try:
+    from pyradiosky import SkyModel
+    HAVE_PYRADIOSKY = True
+except ImportError:
+    HAVE_PYRADIOSKY = False
+   
+try:
+    import healpy
+    HAVE_HEALPY = True
+except ImportError:
+    HAVE_HEALPY = False
+
+try:
+    from astropy import constants, units
+    from astropy.coordinates import Latitude, Longitude, AltAz
+    from astropy.coordinates import EarthLocation, SkyCoord
+    from astropy.time import Time
+    HAVE_ASTROPY = True
+except ImportError:
+    HAVE_ASTROPY = False
 
 def build_source_matrix(
     *,
@@ -144,6 +164,12 @@ def build_source_matrix(
     determined by however the baselines are sorted in the ``pyuvdata.UVData``
     object.
     """
+    if not (HAVE_PYUVDATA and HAVE_PYRADIOSKY and HAVE_ASTROPY):
+        raise NotImplementedError(
+            "pyuvdata, pyradiosky, and astropy must be installed to use the "
+            "model building utility functions."
+        )
+
     # Setup
     if beam is None:
         raise ValueError("A beam model must be provided.")
@@ -321,6 +347,11 @@ def compute_diffuse_matrix(
     flat_sky=True,
 ):
     """TODO: write docs"""
+    if not (HAVE_PYUVDATA and HAVE_PYRADIOSKY and HAVE_HEALPY):
+        raise NotImplementedError(
+            "pyuvdata, pyradiosky, astropy, and healpy must be installed to "
+            "use the diffuse covariance model building utility functions."
+        )
     # TODO: switch over from healpy to astropy-healpix
     if flat_sky:
         return _compute_diffuse_matrix_from_flat_sky(
@@ -489,9 +520,7 @@ def _compute_diffuse_matrix_from_flat_sky(
         # Compute the bandpower measured by this group.
         avg_uvw_mag = np.linalg.norm(uvw_here.mean(axis=0))
         pspec_bessels = spherical_jn(sky_ells, 2*np.pi*avg_uvw_mag)
-        band_power = 4 * np.pi * np.sum(
-            sky_pspec * (2*sky_ells + 1) * pspec_bessels**2
-        )
+        band_power = np.sum(sky_pspec * (2*sky_ells + 1) * pspec_bessels**2)
 
         # Compute the fringe harmonics.
         bessels = spherical_jn(ells, 2*np.pi*uvw_diff_mags[None,:,:])
@@ -514,9 +543,35 @@ def _compute_diffuse_matrix_from_flat_sky(
 
         # Now take the eigendecomposition.
         eigvals, eigvecs = np.linalg.eigh(block)
-        sort = np.argsort(eigvals)[::-1]
-        eigvals = eigvals[sort][:2*n_eig]
-        eigvecs = eigvecs[:,sort][:,:2*n_eig]
+
+        # eigh returns in ascending eigenvalue order; we  want the biggest.
+        eigvals = eigvals[::-1][:2*n_eig]
+
+        # Need to sort the real/imag separately to maintain parity.
+        _eigvecs = eigvecs.copy()
+        _eigvecs[:,::2] = eigvecs[:,::2][:,::-1]
+        _eigvecs[:,1::2] = eigvecs[:,1::2][:,::-1]
+        eigvecs = _eigvecs.copy()[:,:2*n_eig]
+
+        # We want each 2x2 block to look like the covariance of a complex
+        # number, but sometimes the eigenvector order is swapped. For a GRF,
+        # the diagonal should be larger than the off-diagonal, so we ensure
+        # that is always the case. It suffices to check the first two modes,
+        # because these roughly represent the redundantly averaged visibility.
+        if np.abs(eigvecs[0,0]) < np.abs(eigvecs[1,0]):
+            _eigvecs = eigvecs.copy()
+            _eigvecs[::2,::2] = eigvecs[1::2,::2]
+            _eigvecs[1::2,::2] = eigvecs[::2,::2]
+            eigvecs = _eigvecs.copy()
+
+        if np.abs(eigvecs[1,1]) < np.abs(eigvecs[0,1]):
+            _eigvecs = eigvecs.copy()
+            _eigvecs[::2,1::2] = eigvecs[1::2,1::2]
+            _eigvecs[1::2,1::2] = eigvecs[::2,1::2]
+            eigvecs = _eigvecs.copy()
+
+        # This block of the diffuse matrix is just the truncated
+        # eigendecomposition of the expected covariance for this block.
         block = np.sqrt(eigvals)[None,:] * eigvecs
         diff_mat[start:stop] = np.where(np.isnan(block), 0, block)
 
