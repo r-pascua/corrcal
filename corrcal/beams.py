@@ -146,7 +146,7 @@ class TiltedGaussianBeam(AnalyticBeam):
             Cinv = (C_inv_X, C_inv_Y)[feed]
             beam_arg = -0.5 * np.einsum("xp,xy,yp->p", theta, Cinv, theta)
             data_array[:,feed,:,:] = np.exp(
-                beam_arg[np.newaxis,:] * (f_grid/self.ref_freq)**(2*self.spec_ind)
+                beam_arg[np.newaxis,:] * (f_grid/self.ref_freq)**(-2*self.spec_ind)
             )[np.newaxis] / np.sqrt(2)  # Peak-normalized power beam
 
         return data_array
