@@ -16,3 +16,4 @@ dependencies:
     - pip:
         - hera-calibration
         - uvtools
+        - pyradiosky
