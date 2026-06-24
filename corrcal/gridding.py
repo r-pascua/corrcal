@@ -82,10 +82,10 @@ def parse_reds(
 
 def make_groups_from_uvdata(
     uvdata: "UVData",
-	min_bl_len: Optional[float] = 0,
-	max_bl_len: Optional[float] = np.inf,
-	min_group_size: Optional[int] = 1,
-	tol: Optional[float] = 1.0,
+	min_bl_len: float = 0,
+	max_bl_len: float = np.inf,
+	min_group_size: int = 1,
+	tol: float = 1.0,
 ):
     """
     Construct redundant groups from a ``pyuvdata.UVData`` object.
