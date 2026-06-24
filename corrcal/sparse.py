@@ -486,6 +486,8 @@ class ModelCov:
 		self,
 		freq_array: Optional[NDArray[float]] = None,
 		lst_array: Optional[NDArray[float]] = None,
+		freq_interp_kind: Optional[str] = "cubic",
+		lst_interp_kind: Optional[str] = "cubic",
 		inplace: bool = False,
 	):  # TODO: figure out how to make the typing work here
 		pass
