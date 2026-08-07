@@ -28,7 +28,6 @@ from scipy.optimize import minimize
 from time import time
 from corrcal.beams import TiltedGaussianBeam
 
-#define function------------------------------------------------------------
 def rectangular_array(n_row, n_col, ew_sep=6.3, ns_sep=8.5):
     array_layout = {}
     ant_num = 0
@@ -38,8 +37,20 @@ def rectangular_array(n_row, n_col, ew_sep=6.3, ns_sep=8.5):
             ant_num += 1
     return array_layout
 
-# configuration file section -----------------------------------------------
-parser = argparse.ArgumentParser("CLI for CorrCal tests.")
+def prepare_split_data(uvdata: UVData, gains: np.ndarray, ant_1_array: np.ndarray, ant_2_array: np.ndarray,  pol: str | int,)-> np.ndarray:
+    noisy_data = np.array(
+        [
+            uvdata.get_data(ai,aj,pol)[0,0]
+            for ai, aj in zip(ant_1_array, ant_2_array)
+        ]
+    ).flatten()
+    data = noisy_data * gains[ant_1_array] * gains[ant_2_array].conj()
+    split_data = np.zeros(edges[-1], dtype=float)
+    split_data[::2] = data.real 
+    split_data[1::2] = data.imag
+    return noisy_data, data, split_data
+
+parser = argparse.ArgumentParser("CLI for CorrCal beam nonredundancy tests.")
 parser.add_argument("config", type=str, help="Path to config file.")
 parser.add_argument(
     "-o",
@@ -55,25 +66,27 @@ parser.add_argument(
     help="Where the sky model files are saved.",
 )
 
-#--------------------------------------------------------------------------
 if __name__ == "__main__":
     args = parser.parse_args()
     
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader = yaml.SafeLoader) 
 
-    #Sky settings
+    # Sky settings
     freq = config.get("freq", 300e6)
     wavelength = constants.c.si.value / freq
     diameter = config.get("diameter", 6)
 
-    # Empty UVdata for point source (src_uvdata)
+    # Configure observatory parameters and observing time.
     obstime = config.get("obstime", 2459917.737631866) 
-    latitude = config.get("latitude", -30.721526120689507)
-    longitude = config.get("longitude", 21.428303826863015)
-    altitude = config.get("altitude", 1051.690000018105)
-    array_layout = rectangular_array(4,4,ew_sep=6.3, ns_sep=8.5)
-
+    latitude = config.get("latitude", 49.3210)
+    longitude = config.get("longitude", -119.6218)
+    altitude = config.get("altitude", 545.671)
+    n_row = config.get("n_row", 4)
+    n_col = config.get("n_col", 4)
+    array_layout = rectangular_array(n_row, n_col, ew_sep=6.3, ns_sep=8.5)
+    
+    # Initialize empty UVData objects for storing simulated data.
     uvdata = hera_sim.io.empty_uvdata(
         Ntimes=1,
         start_time=obstime,
@@ -81,14 +94,14 @@ if __name__ == "__main__":
         array_layout=array_layout, 
         Nfreqs=1,
         start_freq=freq,
-        channel_width=1.0, #?
+        channel_width=1.0, 
         telescope_location=np.array([latitude, longitude, altitude]),
         polarization_array=["xx",],
     )
-    #Empty Uvdata for diffuse sky (diff_uvdata)
+    
     diff_uvdata = uvdata.copy()
 
-    #Point source sky (source_model)
+    # Create point source sky model.
     src_dir = Path(args.src_dir)
     field_type = config.get("field_type", "calib")
     realization = config.get("realization", "00")
@@ -103,6 +116,7 @@ if __name__ == "__main__":
     fluxes = src_info["fluxes"]  # Jy
 
     stokes = np.zeros((4, 1, fluxes.size), dtype=float)
+    # TODO: graduate source model to skyh5 file
     stokes[0,0] = fluxes
     src_model = SkyModel(
         name=np.arange(fluxes.size).astype(str),
@@ -113,16 +127,23 @@ if __name__ == "__main__":
         component_type="point",
         frame="icrs",
     )
-    #Diffuse sky (diff_model)
+    # Generate diffuse sky model from a power spectrum  
+    diffuse_sky_random_seed = config.get(
+        "diffuse_sky_random_seed",
+        None,
+    )
     max_Tsky = config.get("max_Tsky", 500)
     nside = config.get("nside", 64)
+    
     ell_max = 3*nside - 1
     ells = np.arange(ell_max + 1, dtype=float)
     sky_pspec = (1+ells)**config.get("pspec_idx", -2)
+    
     state = np.random.get_state()
-    np.random.seed(42)
+    np.random.seed(diffuse_sky_random_seed)
     Tsky = healpy.synfast(sky_pspec, nside)
     np.random.set_state(state)
+    
     monopole = np.abs(Tsky.min())
     Tsky += monopole  # Make the diffuse signal nonnegative.
     rescaling = max_Tsky / Tsky.max()
@@ -159,118 +180,92 @@ if __name__ == "__main__":
         frame="icrs",
         freq_array=np.array([freq])*units.Hz,
     )
-    # Data Beam
-    # define parameters settings 
-    # config file
-    aspect_ratio = config.get("aspect_ratio", 1)
-    beam_fwhm = 1.029 * wavelength / diameter 
-    beam_std = beam_fwhm / np.sqrt(8 * np.log(2))
     
-    sig_x_mean = beam_std
-    sig_x_std = np.radians(config.get("sig_x_std", 0))
+    # Generate the perturbed beams for simulating visibilities.
+    beam_param_names = [
+        "sig_x",
+        "sig_y",
+        "ref_freq",
+        "spec_ind",
+        "feed_rotation_angle",
+        "inclination_angle",
+        "elevation_axis_rotation",
+        "theta_x_offset",
+        "theta_y_offset",
+    ]
     
-    sig_y_mean = beam_std / aspect_ratio
-    sig_y_std = np.radians(config.get("sig_y_std", 0))
+    conversions = {
+        name: 1.0 if name in ("ref_freq", "spec_ind") 
+        else units.deg.to(units.rad)
+        for name in beam_param_names
+    }
+    beam_params = {
+        "ideal": {
+            "sig_x": (
+                config["beam_params"].get("sig_x_mean", 1.0)
+                * units.deg.to(units.rad)
+            ),
+            "sig_y": (
+                config["beam_params"].get("sig_y_mean", 1.0)
+                * units.deg.to(units.rad)
+            ),
+            "ref_freq": config["beam_params"].get(
+                "ref_freq_mean", 300e6
+            ),
+            "spec_ind": config["beam_params"].get(
+            "spec_ind_mean", 0.0
+            ),
+            "feed_rotation_angle": (
+                config["beam_params"].get(
+                    "feed_rotation_angle_mean", 0.0
+                )
+                * units.deg.to(units.rad)
+            ),
+            "inclination_angle": (
+                config["beam_params"].get(
+                    "inclination_angle_mean", 5.0
+                )
+                * units.deg.to(units.rad)
+            ),
+            "elevation_axis_rotation": (
+                config["beam_params"].get(
+                    "elevation_axis_rotation_mean", 0.0
+                )
+                * units.deg.to(units.rad)
+            ),
+            "theta_x_offset": (
+                config["beam_params"].get(
+                    "theta_x_offset_mean", 0.0
+                )
+                * units.deg.to(units.rad)
+            ),
+            "theta_y_offset": (
+                config["beam_params"].get(
+                    "theta_y_offset_mean", 0.0
+                )
+                * units.deg.to(units.rad)
+            ),
+        }
+    }
+    for ant in array_layout.keys():
+        beam_params[ant] = {
+            param: np.random.normal(
+                loc=beam_params["ideal"][param],
+                scale=config["beam_params"].get(f"{param}_std", 0) * conv,
+            ) for param, conv in conversions.items()
+        }
     
-    ref_freq = config.get("ref_freq", 300e6)
-    spec_ind = config.get("spec_ind", 0)
+    model_beam = TiltedGaussianBeam(**beam_params["ideal"])
+    data_beams = [
+        TiltedGaussianBeam(**params)
+        for name, params in beam_params.items()
+        if name != "ideal"
+    ]
 
-    feed_rotation_mean = np.radians(
-        config.get("feed_rotation_mean", 0.0)
-    )
-    feed_rotation_std = np.radians(
-        config.get("feed_rotation_std", 0.0)
-    )
-
-    inclination_mean = np.radians(
-        config.get("inclination_mean", 5.0)
-    )
-    inclination_std = np.radians(
-        config.get("inclination_std", 0.0)
-    )
-
-    elevation_rotation_mean = np.radians(
-        config.get("elevation_rotation_mean", 0.0)
-    )
-    elevation_rotation_std = np.radians(
-        config.get("elevation_rotation_std", 0.0)
-    )
-    theta_x_std = np.radians(
-        config.get("theta_x_std", 0)
-    )
-    theta_x_mean = np.radians(
-        config.get("theta_x_mean", 0.0)
-    )
-
-    theta_y_std = np.radians(
-        config.get("theta_y_std", 0)
-    )
-    theta_y_mean = np.radians(
-        config.get("theta_y_mean", 0.0)
-    )
-    
-    data_beams = []
-    for i in range(len(array_layout)): 
-
-        sig_x = np.random.normal(
-            loc=sig_x_mean,
-            scale=sig_x_std
-        )
-
-        sig_y = np.random.normal(
-            loc=sig_y_mean,
-            scale=sig_y_std
-        )
-        
-        ref_freq = ref_freq
-        spec_ind = spec_ind
-        
-        feed_rotation_angle = np.random.normal(
-        loc=feed_rotation_mean,
-        scale=feed_rotation_std
-        )
-    
-        inclination_angle = np.random.normal(
-        loc=inclination_mean,
-        scale=inclination_std
-        )
-    
-        elevation_axis_rotation = np.random.normal(
-        loc=elevation_rotation_mean,
-        scale=elevation_rotation_std
-        )
-    
-        theta_x_offset = np.random.normal(
-        loc=theta_x_mean,
-        scale=theta_x_std
-        )
-        
-        theta_y_offset = np.random.normal(
-        loc=theta_y_mean,
-        scale=theta_y_std
-        )
-
-        #create an instance
-        beam = TiltedGaussianBeam(
-            sig_x=sig_x, sig_y=sig_y, ref_freq=ref_freq, spec_ind=spec_ind,
-            feed_rotation_angle=feed_rotation_angle, inclination_angle=inclination_angle,
-            elevation_axis_rotation=elevation_axis_rotation,
-            theta_x_offset=theta_x_offset, theta_y_offset=theta_y_offset,
-        )
-        data_beams.append(beam)
-
-    beam_ids = {str(idx): idx for idx, beam in enumerate(data_beams)} 
-        
-    # Model beam 
-    modelbeam = TiltedGaussianBeam(
-        sig_x=sig_x_mean, sig_y=sig_y_mean, ref_freq=ref_freq, spec_ind=spec_ind,
-        feed_rotation_angle=feed_rotation_mean, inclination_angle=inclination_mean,
-        elevation_axis_rotation=elevation_rotation_mean,
-        theta_x_offset=theta_x_mean, theta_y_offset=theta_y_mean,
-    )
+    beam_ids = {str(ant): idx for idx, ant in enumerate(array_layout.keys())} 
     ideal_beam_ids = [0,] * len(array_layout)
-    #Visibility data simulation (hera_sim.visibilities.ModelData)
-    #point source visibility
+    
+    #Simulate point source visibilities with perturbed beam 
     data_model = hera_sim.visibilities.ModelData(
         uvdata=uvdata,
         sky_model=src_model,
@@ -282,7 +277,8 @@ if __name__ == "__main__":
         simulator=hera_sim.visibilities.MatVis(),
     )
     simulation.simulate()
-    #Diffuse sky visibility
+    
+    #Simulate diffuse visibilities with perturbed beam
     data_model = hera_sim.visibilities.ModelData(
         uvdata=diff_uvdata,
         sky_model=diff_model,
@@ -296,10 +292,9 @@ if __name__ == "__main__":
     simulation.simulate()
 
     # Sum the data together.
-    #uvdata = src_uvdata.copy()
     uvdata.data_array += diff_uvdata.data_array
 
-    #simulate unperbutated visibility
+    # Simulate unperturbed visibilities.
     ideal_uvdata = hera_sim.io.empty_uvdata(
         Ntimes=1,
         start_time=obstime,
@@ -317,7 +312,7 @@ if __name__ == "__main__":
         uvdata=ideal_uvdata,
         sky_model=src_model,
         beam_ids=ideal_beam_ids,
-        beams=[modelbeam,],
+        beams=[model_beam,],
     )
     simulation = hera_sim.visibilities.VisibilitySimulation(
         data_model=ideal_data_model,
@@ -329,7 +324,7 @@ if __name__ == "__main__":
         uvdata=ideal_diff_uvdata,
         sky_model=diff_model, 
         beam_ids=ideal_beam_ids,
-        beams=[modelbeam,],
+        beams=[model_beam,],
     )
     simulation = hera_sim.visibilities.VisibilitySimulation(
         data_model=ideal_data_model,
@@ -338,37 +333,31 @@ if __name__ == "__main__":
     simulation.simulate()
     ideal_uvdata.data_array += ideal_diff_uvdata.data_array
 
-    # Create Model for Calibration
+    # Prepare to compute model covariance.
     min_length = config.get("min_length", np.sqrt(2) * diameter)
     min_group_size = max(
         config.get("min_group_size", 5),
         config.get("n_eig", 1),
     )
 
-    # redundant group (ant1, ant2, edges)
     ant_1_array, ant_2_array, edges = corrcal.gridding.make_groups_from_uvdata(
         uvdata, min_bl_len=min_length, min_group_size=min_group_size
     )
     
     enu_antpos = uvdata.get_enu_data_ants()[0]
     baselines = enu_antpos[ant_2_array] - enu_antpos[ant_1_array]
-    all(
-        np.allclose(baselines[start], baselines[start:stop])
-        for start, stop in zip(edges//2, edges[1:]//2)
-    )
 
     observatory = EarthLocation(uvdata.telescope.location)
     local_frame = AltAz(
         location=observatory, obstime=Time(obstime, format="jd")
     )
-    #diffuse matrix
+
     n_eig = config.get("n_eig", 1)
 
-    # For simplicity, we'll use the provided helper for computing the diffuse matrix.
     diff_mat = corrcal.models._compute_diffuse_matrix_from_flat_sky(
         sky_pspec,  
         nside,
-        modelbeam,
+        model_beam,
         freq,
         enu_antpos,
         ant_1_array,
@@ -376,23 +365,37 @@ if __name__ == "__main__":
         edges,
         n_eig=n_eig,
     )
-    # Source martrix
+
     source_positions = SkyCoord(
         Longitude(ra*units.rad), Latitude(dec*units.rad), frame="icrs"
     ).transform_to(local_frame)
 
     above_horizon = source_positions.alt > 0
-    near_zenith = source_positions.alt.deg > 80
+    dish_pointing = SkyCoord(
+        az=(
+            beam_params["ideal"]["elevation_axis_rotation"]
+            * units.rad
+        ),
+        alt=(
+            np.pi / 2
+            - beam_params["ideal"]["inclination_angle"]
+        ) * units.rad,
+        frame=local_frame,
+    )
+    source_separation = source_positions.separation(dish_pointing)
+    near_dish_pointing = (source_separation < 10 * units.deg)
+    # TODO: set brightness threshold from config.
     is_bright = fluxes > 100 
-    select = near_zenith | (is_bright & above_horizon)
+    select = near_dish_pointing | (is_bright & above_horizon)
     src_az = Longitude(np.pi/2*units.rad - source_positions.az)[select].to(units.rad).value
     src_za = np.pi/2 - source_positions.alt.rad[select]
     src_flux = fluxes[select]
 
-    beam_vals = modelbeam.power_eval(
+    beam_vals = model_beam.power_eval(
         az_array=src_az, za_array=src_za, freq_array=np.array([freq]),
     )[0][0,0]
     weighted_fluxes = beam_vals * src_flux
+    
    # Now pick the n_src brightest observed sources for calibration.
     n_src = config.get("n_src", 1)
     sort = np.argsort(weighted_fluxes)[::-1]
@@ -413,8 +416,7 @@ if __name__ == "__main__":
     src_mat[::2] = src_vis.real
     src_mat[1::2] = src_vis.imag
 
-    #Gain Simulation 
-    #True Gains 
+    # Generate the true gains.
     gain_amp = config.get("gain_amp", 1) 
     amp_jitter = config.get("amp_jitter", 0.1) 
     n_ants = uvdata.Nants_data 
@@ -422,7 +424,7 @@ if __name__ == "__main__":
     gain_phases = np.random.uniform(0, 2*np.pi, n_ants)
     true_gains = gain_amplitudes * np.exp(1j*gain_phases)
 
-    #Initial guess of gains 
+    # Generate initial guess of true gains and split into real and imaginary.
     amp_error = config.get("amp_error", 0.1) 
     phs_error = config.get("phs_error", 0.1)
     init_amp = gain_amplitudes * np.random.normal(size=n_ants, loc=1, scale=amp_error)
@@ -432,7 +434,7 @@ if __name__ == "__main__":
     split_gains[::2] = init_gains.real
     split_gains[1::2] = init_gains.imag
 
-    #Noise Estimation 
+    # Setting up noise parameters
     snr = config.get("snr", 20)
     fudge_factor = 25000
     snr = snr * fudge_factor
@@ -443,8 +445,7 @@ if __name__ == "__main__":
     noise_amp = np.abs(autocorr)[0,0] / snr
     noise = 0.5 * np.ones(2*ant_1_array.size, dtype=float) * noise_amp**2
 
-    # add Noise realization
-    noise_seed = 1234
+    # Add noise realization.
     sim = hera_sim.Simulator(data=uvdata.copy())
     sim.add(
         "thermal_noise",
@@ -453,10 +454,11 @@ if __name__ == "__main__":
         channel_width=channel_width,
         Trx=0,
         omega_p=1,
-        seed = noise_seed
+        seed="once",
     )
 
-    ideal_sim = hera_sim.Simulator(data = ideal_uvdata.copy())
+    ideal_sim = hera_sim.Simulator(data=ideal_uvdata.copy())
+    ideal_sim._seeds = sim._seeds.copy()
     ideal_sim.add(
         "thermal_noise",
         autovis=autocorr,
@@ -464,10 +466,10 @@ if __name__ == "__main__":
         channel_width=channel_width,
         Trx=0,
         omega_p=1,
-        seed = noise_seed
+        seed="once"
     )
     
-    # Apply Corrcal for creating sparse covariance object
+    # Create model covariance object.
     cov = corrcal.sparse.SparseCov(
         noise=noise,
         diff_mat=diff_mat,
@@ -476,37 +478,16 @@ if __name__ == "__main__":
         n_eig=2*n_eig,
         isinv=False,
     )
+
+    # Split the data into alternating real/imaginary components 
+    noisy_data, data, split_data = prepare_split_data(sim, true_gains, ant_1_array, ant_2_array, "xx")
     
-    # Run minimizer on corrcal,optimize.nll
+    ideal_noisy_data, ideal_data, ideal_split_data = prepare_split_data(ideal_sim, true_gains, ant_1_array, ant_2_array, "xx")
+    
+    # Collect extra arguments required for optimization
     gain_scale = config.get("gain_scale", 1)  
-    phs_norm = config.get("phs_norm", 1)  
-
-    # Split the data into alternating real/imaginary components
-    noisy_data = np.array(
-        [
-            sim.get_data(ai,aj,"xx")[0,0]
-            for ai, aj in zip(ant_1_array, ant_2_array)
-        ]
-    ).flatten()
-    data = noisy_data * true_gains[ant_1_array] * true_gains[ant_2_array].conj()
-
-    split_data = np.zeros(edges[-1], dtype=float)
-    split_data[::2] = data.real 
-    split_data[1::2] = data.imag
-
-    ideal_noisy_data = np.array(
-        [
-            ideal_sim.get_data(ai,aj,"xx")[0,0]
-            for ai, aj in zip(ant_1_array, ant_2_array)
-        ]
-    ).flatten()
-    ideal_data = ideal_noisy_data * true_gains[ant_1_array] * true_gains[ant_2_array].conj()
-
-    ideal_split_data = np.zeros(edges[-1], dtype=float)
-    ideal_split_data[::2] = ideal_data.real 
-    ideal_split_data[1::2] = ideal_data.imag
+    phs_norm = config.get("phs_norm", 1)
     
-    # For Subtrials
     opt_args = (
         cov, split_data, ant_1_array, ant_2_array, gain_scale, phs_norm
     )
@@ -514,7 +495,8 @@ if __name__ == "__main__":
     ideal_opt_args = (
         cov, ideal_split_data, ant_1_array, ant_2_array, gain_scale, phs_norm
     )
-    # Calibration
+
+    # Run calibration
     result = minimize(
         corrcal.optimize.nll,
         gain_scale*split_gains,
@@ -539,30 +521,31 @@ if __name__ == "__main__":
         ideal_result.x[::2] + 1j*ideal_result.x[1::2], 0
     )
 
-    true_data = np.array(
+    true_vis = np.array(
         [
             uvdata.get_data(ai,aj,'xx')[0,0]
             for ai, aj in zip(ant_1_array, ant_2_array)
         ]
     )
-    ideal_data = np.array(
+    ideal_vis = np.array(
         [
             ideal_uvdata.get_data(ai,aj,'xx')[0,0]
             for ai, aj in zip(ant_1_array, ant_2_array)
         ]
     )
-    # save updated gains
-    # probabiliy save
+    
+    # Write calibration solutions, simulated data, and metadata to disk.
     outdir = Path(args.outdir)
     basename = Path(args.config).stem
+    with open(outdir / f"{basename}_beam_params.yaml", "w") as f:
+        yaml.dump(beam_params, f)
+        
     np.savez(
         outdir / f"{basename}_results.npz",
-        data_beam=data_beams,
-        model_beam=modelbeam,
         noisy_vis=noisy_data,
         ideal_noisy_data=ideal_noisy_data,
-        ideal_vis=ideal_data,
-        ref_vis=true_data,
+        ideal_vis=ideal_vis,
+        ref_vis=true_vis,
         init_gains=init_gains,
         true_gains=true_gains,
         ref_soln=result.x[::2]+1j*result.x[1::2],
@@ -576,4 +559,5 @@ if __name__ == "__main__":
         src_mat=src_mat,
         diff_mat=diff_mat,
         noise=noise,
+        array_layout=array_layout
     )
