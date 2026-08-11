@@ -4,20 +4,111 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools_scm]
 
-[tool.black]
+[project]
+name = "corrcal"
+description = "Python-C implementation of Correlation Calibration"
+readme = "README.rst"
+authors = [
+    {name="Robert Pascua"}
+]
+license = {text="MIT"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+requires-python = ">=3.10"
+dynamic = ["version"]
+dependencies = [
+    "numpy",
+]
+
+[project.optional-dependencies]
+sim = [
+    "pyuvdata",
+]
+
+[dependency-groups]
+docs = [
+    "ipython>=9.13.0",
+    "matplotlib>=3.8",
+    "nbsphinx>=0.9.8",
+    "numpydoc>=0.9",
+    "sphinx>=9.0",
+    "sphinx-autorun>=2.0.0",
+]
+
+tests = [
+    "coverage>=7.6.1",
+    "pytest>=3.5.1",
+    "pytest-cov>=2.7.0",
+    "pytest-sugar>=1.1.1",
+    "pytest-xdist>=3.8.0",
+]
+
+doctest = [
+    {include-groups="tests"},
+    "ipykernel>=7.2.0",
+    "papermill>=2.7.0",
+]
+
+dev = [
+    {include-group="docs"},
+    {include-group="tests"},
+    "prek>=0.3.9",
+    "ruff>=0.15.10",
+]
+
+[project.urls]
+Documentation = "https://corrcal.readthedocs.org"
+Repository = "https://github.com/r-pascua/corrcal"
+
+[tool.setuptools]
+script-files = [
+    "scripts/corrcal_sim_run.py",
+    "scripts/nonred_tests.py",
+]
+
+[tool.pytest]
+addopts = [
+    "--cov corrcal",
+    "--cov-config=.coveragerc",
+    "--cov-report xml:./coverage.xml",
+]
+testpaths = "corrcal/tests"
+
+[tool.ruff]
+extend-exclude = ["*.ipynb"]
 line-length = 79
-py36 = false
-exclude = '''
-/(
-    \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | _build
-  | buck-out
-  | build
-  | dist
-)/
-'''
+fix = true
+
+[tool.ruff.lint]
+extend-select = [
+    "A",       # Don't shadow builtins
+    "B",       # flake8-bugbear
+    "COM",     # Comma-related rules
+    "C4",      # Comprehension-related rules
+    "ERA001",  # Delete commented-out code
+    "E",       # pycodestyle errors
+    "I",       # Format and check imports
+    "NPY",     # NumPy-related rules
+    "PTH",     # Use pathlib
+    "UP",      # Keep syntax up-to-date
+    "W",       # pycodestyle warnings
+]
+
+ignore = [
+    "E401",    # Sometimes multiple imports is cleaner
+    "NPY002",  # Allow legacy use of NumPy RNG
+]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
