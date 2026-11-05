@@ -1,0 +1,186 @@
+import numpy as np
+import cupy as cp
+import ctypes
+import os
+from pathlib import Path
+
+lib_dir = Path(__file__).resolve().parent / "kernels"
+
+def _load(name):
+    matches = list(lib_dir.glob(f"{name}*.so"))
+    if not matches:
+        raise FileNotFoundError(f"No .so matching {name!r} in {lib_dir}")
+    return ctypes.cdll.LoadLibrary(str(matches[0]))
+
+
+_warp_reduction_kernel = _load("geneig_warp_red_kernel_templated")
+_fused_chol_inv = _load("fused_chol_inv_kernel")
+_diffuse_bar_kernel = _load("diffuse_bar_kernel")
+_sig_prime_kernels = _load("sig_prime_kernels_pta")
+_matvec_mul_kernels = _load("sparse_cov_times_vec")
+_apply_gains_kernel = _load("apply_gains")
+_grad_nll_kernels = _load("grad_nll_kernels")
+
+
+sync_device = _warp_reduction_kernel.sync_device
+sync_device.restype = None
+sync_device.argtypes = []
+
+
+# INVERSE COVARIANCE
+
+warp_reduction = _warp_reduction_kernel.launch_two_level_warp_reduction
+warp_reduction.restype = None
+warp_reduction.argtypes = [
+    ctypes.c_void_p,  # diffuse
+    ctypes.c_void_p,  # noise
+    ctypes.c_void_p,  # edges
+    ctypes.c_void_p,  # out
+    ctypes.c_int,     # nb
+    ctypes.c_int,     # n_eig
+    ctypes.c_int,     # threads_per_block
+]
+    
+fused_chol_inv = _fused_chol_inv.launch_batched_cholesky_inv
+fused_chol_inv.restype = None
+fused_chol_inv.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+]
+
+mul_temp_by_diffuse_chol_inv = _diffuse_bar_kernel.launch_mul_temp_by_chol
+mul_temp_by_diffuse_chol_inv.restype = None
+mul_temp_by_diffuse_chol_inv.argtypes = [
+    ctypes.c_void_p,   #noise input
+    ctypes.c_void_p,   #diffuse input
+    ctypes.c_void_p,   #diffuse chol inv T mat
+    ctypes.c_void_p,   #output mat    
+    ctypes.c_void_p,      #edges
+    ctypes.c_int,      #num blocks
+    ctypes.c_int,      #n_eig
+]
+
+# ============================================================================
+# Sig_prime (second Woodbury level)
+# ============================================================================
+  
+cap_reduce = _sig_prime_kernels.launch_cap_reduce
+cap_reduce.restype = ctypes.c_int          # it returns int, not None
+cap_reduce.argtypes = [
+    ctypes.c_int,      # n_src
+    ctypes.c_int,      # n_eig
+    ctypes.c_int,      # nb
+    ctypes.c_void_p,   # Sig
+    ctypes.c_void_p,   # Del_prime
+    ctypes.c_void_p,   # noise
+    ctypes.c_void_p,   # edges
+    ctypes.c_void_p,   # B
+    ctypes.c_void_p,   # M_sig
+    ctypes.c_void_p,   # stream
+]
+
+
+chol_inv_fused = _sig_prime_kernels.launch_chol_inv_fused
+chol_inv_fused.restype = ctypes.c_int
+chol_inv_fused.argtypes = [
+    ctypes.c_int,      # n_src
+    ctypes.c_void_p,   # M_sig
+    ctypes.c_void_p,   # L_inv
+    ctypes.c_void_p,   # logdet
+    ctypes.c_int,      # return_det (bool)
+    ctypes.c_void_p,   # stream
+]
+
+
+apply_sig_prime = _sig_prime_kernels.launch_apply_sig_prime
+apply_sig_prime.restype = ctypes.c_int
+apply_sig_prime.argtypes = [
+    ctypes.c_int,      # n_src
+    ctypes.c_int,      # n_eig
+    ctypes.c_int,      # nb
+    ctypes.c_void_p,   # Sig
+    ctypes.c_void_p,   # Del_prime
+    ctypes.c_void_p,   # noise
+    ctypes.c_void_p,   # edges
+    ctypes.c_void_p,   # B
+    ctypes.c_void_p,   # L_inv
+    ctypes.c_void_p,   # Sig_prime
+    ctypes.c_void_p,   # stream
+]
+
+# --------------------------
+# MULTIPLY SPARSE COV BY VEC
+# --------------------------
+sparse_cov_times_vec = _matvec_mul_kernels.launch_sparse_cov_times_vec
+sparse_cov_times_vec.restype = None
+sparse_cov_times_vec.argtypes = [
+    ctypes.c_void_p,   # noise
+    ctypes.c_void_p,   # diffuse
+    ctypes.c_void_p,   # source
+    ctypes.c_void_p,   # vec
+    ctypes.c_void_p,   # out
+    ctypes.c_void_p,   # del_tmp workspace
+    ctypes.c_void_p,   # sig_tmp workspace
+    ctypes.c_void_p,   # edges (int32)
+    ctypes.c_int,      # nb
+    ctypes.c_int,      # n_src
+    ctypes.c_int,      # n_eig
+    ctypes.c_int,      # is_inv
+    ctypes.c_void_p,   # cudaStream_t
+]
+
+apply_gains_launch = _apply_gains_kernel.launch_apply_gains
+apply_gains_launch.restype = ctypes.c_int
+apply_gains_launch.argtypes = [
+    ctypes.c_void_p,   # gains  (2*n_ant,) float32, Re/Im alternating
+    ctypes.c_void_p,   # ant_1  (n_bl,) int32
+    ctypes.c_void_p,   # ant_2  (n_bl,) int32
+    ctypes.c_void_p,   # mat    (2*n_bl, n_col) float32
+    ctypes.c_void_p,   # out    (2*n_bl, n_col) float32
+    ctypes.c_int,      # n_bl
+    ctypes.c_int,      # n_col
+    ctypes.c_void_p,   # cudaStream_t
+]
+
+
+grad_nll_launch = _grad_nll_kernels.launch_grad_nll
+grad_nll_launch.restype = ctypes.c_int
+grad_nll_launch.argtypes = [
+    ctypes.c_int,      # n_src
+    ctypes.c_int,      # n_eig
+    ctypes.c_int,      # nb
+    ctypes.c_int,      # n_bl
+    ctypes.c_int,      # n_ant
+    ctypes.c_void_p,   # diff_g   (n_row, n_eig)  G Delta
+    ctypes.c_void_p,   # src_g    (n_row, n_src)  G Sigma
+    ctypes.c_void_p,   # diff     (n_row, n_eig)  Delta (ungained)
+    ctypes.c_void_p,   # src      (n_row, n_src)  Sigma (ungained)
+    ctypes.c_void_p,   # dbar     (n_row, n_eig)  Delta_bar
+    ctypes.c_void_p,   # sbar     (n_row, n_src)  Sigma_bar
+    ctypes.c_void_p,   # R_del    (nb, n_eig, n_eig)  L_b^-T  (InvCovWorkspace.L_del)
+    ctypes.c_void_p,   # B        (nb, n_src, n_eig)          (InvCovWorkspace.B)
+    ctypes.c_void_p,   # L_sig_inv (n_src, n_src)             (InvCovWorkspace.L_sig_inv)
+    ctypes.c_void_p,   # noise    (n_row,)        N
+    ctypes.c_void_p,   # p        (n_row,)        C^-1 d
+    ctypes.c_void_p,   # data     (n_row,)        d
+    ctypes.c_void_p,   # gains    (2 n_ant,)      already / scale
+    ctypes.c_void_p,   # ant_1    (n_bl,) int32
+    ctypes.c_void_p,   # ant_2    (n_bl,) int32
+    ctypes.c_void_p,   # edges    (nb+1,) int32
+    ctypes.c_void_p,   # csr_ptr  (n_ant+1,) int32
+    ctypes.c_void_p,   # csr_idx  (2 n_bl,) int32
+    ctypes.c_void_p,   # u_acc    (n_src,) float64, zeroed in the launcher
+    ctypes.c_void_p,   # phs_sum  (1,)       zeroed in the launcher
+    ctypes.c_void_p,   # del_tmp  (nb, n_eig)
+    ctypes.c_void_p,   # sig_tmp  (n_src,)
+    ctypes.c_void_p,   # contrib  (n_bl, 4)
+    ctypes.c_void_p,   # out      (2 n_ant,)
+    ctypes.c_float,    # phs_coef = 2 / (n_ant^2 phs_norm_fac^2), 0 disables
+    ctypes.c_float,    # inv_scale
+    ctypes.c_void_p,   # cudaStream_t
+]
+ 
